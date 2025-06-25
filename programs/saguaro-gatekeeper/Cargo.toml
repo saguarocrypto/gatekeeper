@@ -1,0 +1,22 @@
+[package]
+name = "saguaro-gatekeeper"
+version = "0.1.0"
+description = "Solana Anchor program for managing epoch-based sandwich validator slot assignments."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "saguaro_gatekeeper"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build"]
+
+
+[dependencies]
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+

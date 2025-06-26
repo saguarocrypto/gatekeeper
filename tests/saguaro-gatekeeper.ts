@@ -4,13 +4,10 @@ import { SaguaroGatekeeper } from "../target/types/saguaro_gatekeeper";
 import { assert } from "chai";
 import {
   getSandwichValidatorsPda,
-  getPauseStatePda,
   setSandwichValidators,
   updateSandwichValidator,
   validateSandwichValidators,
   closeSandwichValidator,
-  initializePauseState,
-  setPauseState,
 } from "../ts/sdk";
 
 describe("saguaro-gatekeeper", () => {
@@ -32,21 +29,6 @@ describe("saguaro-gatekeeper", () => {
     );
     await provider.sendAndConfirm(tx, [], { commitment: "confirmed" });
 
-    // Initialize pause state for all tests
-    try {
-      await initializePauseState(program, {
-        multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
-      console.log("Pause state initialized successfully.");
-    } catch (error) {
-      // If it already exists, that's fine
-      if (!error.toString().includes("already in use")) {
-        throw error;
-      }
-      console.log("Pause state already exists, continuing...");
-    }
   });
 
   it("should create the sandwich_validators PDA for a specific epoch", async () => {
@@ -465,166 +447,9 @@ describe("saguaro-gatekeeper", () => {
 
   // === Pause Mechanism Tests ===
 
-  it("should allow pausing and unpausing the program", async () => {
-    // Test pausing the program
-    await setPauseState(program, {
-      multisigAuthority: multisigAuthority.publicKey,
-      isPaused: true,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
 
-    // Verify pause state
-    const { pda: pauseStatePda } = getPauseStatePda(program.programId);
-    const pauseAccount = await program.account.pauseState.fetch(pauseStatePda);
-    assert.isTrue(pauseAccount.isPaused, "Program should be paused");
 
-    // Test unpausing the program
-    await setPauseState(program, {
-      multisigAuthority: multisigAuthority.publicKey,
-      isPaused: false,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
 
-    // Verify unpause state
-    const unpausedAccount = await program.account.pauseState.fetch(pauseStatePda);
-    assert.isFalse(unpausedAccount.isPaused, "Program should be unpaused");
-  });
-
-  it("should fail administrative operations when paused", async () => {
-    const epochArg = new BN(999);
-    // Epoch 999 slots: 431,568,000 - 431,999,999
-    const slotsArg = [new BN(431568000), new BN(431568001)];
-
-    // First create a PDA when program is unpaused (for update/close tests)
-    await setSandwichValidators(program, {
-      epoch: epochArg.toNumber(),
-      slots: slotsArg,
-      multisigAuthority: multisigAuthority.publicKey,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-
-    // Now pause the program
-    await setPauseState(program, {
-      multisigAuthority: multisigAuthority.publicKey,
-      isPaused: true,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-
-    // Test that setSandwichValidators fails when paused (new epoch)
-    const newEpochArg = new BN(1000);
-    // Epoch 1000 slots: 432,000,000 - 432,431,999
-    const newSlotsArg = [new BN(432000000), new BN(432000001)];
-    try {
-      await setSandwichValidators(program, {
-        epoch: newEpochArg.toNumber(),
-        slots: newSlotsArg,
-        multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
-      assert.fail("setSandwichValidators should have failed when paused");
-    } catch (error) {
-      assert.isTrue(
-        error.toString().includes("ProgramPaused"),
-        `Expected 'ProgramPaused' error, but got: ${error}`
-      );
-    }
-
-    // Test that updateSandwichValidator fails when paused
-    try {
-      await updateSandwichValidator(program, {
-        epoch: epochArg.toNumber(),
-        newSlots: slotsArg,
-        multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
-      assert.fail("updateSandwichValidator should have failed when paused");
-    } catch (error) {
-      assert.isTrue(
-        error.toString().includes("ProgramPaused"),
-        `Expected 'ProgramPaused' error, but got: ${error}`
-      );
-    }
-
-    // Test that closeSandwichValidator fails when paused
-    try {
-      await closeSandwichValidator(program, {
-        epoch: epochArg.toNumber(),
-        multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
-      assert.fail("closeSandwichValidator should have failed when paused");
-    } catch (error) {
-      assert.isTrue(
-        error.toString().includes("ProgramPaused"),
-        `Expected 'ProgramPaused' error, but got: ${error}`
-      );
-    }
-
-    // Unpause for subsequent tests
-    await setPauseState(program, {
-      multisigAuthority: multisigAuthority.publicKey,
-      isPaused: false,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-  });
-
-  it("should allow validateSandwichValidators to work when paused (CPI compatibility)", async () => {
-    // First pause the program
-    await setPauseState(program, {
-      multisigAuthority: multisigAuthority.publicKey,
-      isPaused: true,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-
-    // Test that validate instruction still works when paused
-    try {
-      const tx = await validateSandwichValidators(program, {
-        multisigAuthority: multisigAuthority.publicKey,
-      });
-      await tx.rpc();
-      assert.ok(true, "validateSandwichValidators should work when paused");
-    } catch (error) {
-      // Should not fail due to pause - only due to validation logic
-      assert.isFalse(
-        error.toString().includes("ProgramPaused"),
-        `validateSandwichValidators should not be affected by pause state, but got: ${error}`
-      );
-    }
-
-    // Unpause for subsequent tests
-    await setPauseState(program, {
-      multisigAuthority: multisigAuthority.publicKey,
-      isPaused: false,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-  });
-
-  it("should NOT allow unauthorized users to change pause state", async () => {
-    try {
-      await setPauseState(program, {
-        multisigAuthority: multisigAuthority.publicKey,
-        isPaused: true,
-      })
-        .signers([unauthorizedUser])
-        .rpc();
-      assert.fail("Unauthorized user should not be able to change pause state");
-    } catch (error) {
-      assert.isTrue(
-        error.toString().includes("unknown signer"),
-        `Expected 'unknown signer' error, but got: ${error}`
-      );
-    }
-  });
 
   // === Enhanced Validation Tests ===
 
@@ -1042,54 +867,6 @@ describe("saguaro-gatekeeper", () => {
     assert.strictEqual(account.slots.length, 200, "Should have 200 total slots");
   });
 
-  it("should fail add operations when paused", async () => {
-    const epochArg = new BN(204);
-    // Epoch 204 slots: 88,128,000 - 88,559,999
-    const initialSlots = [new BN(88128000), new BN(88128001)];
-    const additionalSlots = [new BN(88128002), new BN(88128003)];
-
-    // Create initial PDA
-    await setSandwichValidators(program, {
-      epoch: epochArg.toNumber(),
-      slots: initialSlots,
-      multisigAuthority: multisigAuthority.publicKey,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-
-    // Pause the program
-    await setPauseState(program, {
-      multisigAuthority: multisigAuthority.publicKey,
-      isPaused: true,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-
-    // Try to append while paused using update
-    try {
-      await updateSandwichValidator(program, {
-        epoch: epochArg.toNumber(),
-        newSlots: additionalSlots,
-        multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
-      assert.fail("Append should have failed when paused");
-    } catch (error) {
-      assert.isTrue(
-        error.toString().includes("ProgramPaused"),
-        `Expected 'ProgramPaused' error, but got: ${error}`
-      );
-    }
-
-    // Unpause for subsequent tests
-    await setPauseState(program, {
-      multisigAuthority: multisigAuthority.publicKey,
-      isPaused: false,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-  });
 
   it("should reject empty operations gracefully", async () => {
     const epochArg = new BN(205);

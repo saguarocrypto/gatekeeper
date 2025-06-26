@@ -1,12 +1,9 @@
 use anchor_lang::prelude::*;
-use crate::{UpdateSandwichValidator, SandwichValidatorsUpdated, MAX_SLOTS_PER_TRANSACTION, MAX_SLOTS_PER_EPOCH, GatekeeperError, instructions::pause_utils};
+use crate::{UpdateSandwichValidator, SandwichValidatorsUpdated, MAX_SLOTS_PER_TRANSACTION, MAX_SLOTS_PER_EPOCH, GatekeeperError};
 
 /// Handler for the `update_sandwich_validator` instruction.
 /// This instruction supports both adding new slots and removing existing slots.
-/// This instruction is subject to the pause mechanism.
 pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots: Vec<u64>, remove_slots: Vec<u64>) -> Result<()> {
-    // Check if the program is paused before proceeding
-    pause_utils::check_not_paused(&ctx.accounts.pause_state)?;
 
     msg!("Updating sandwich validator slots for epoch: {}", epoch_arg);
     msg!("Number of slots to add: {}", new_slots.len());

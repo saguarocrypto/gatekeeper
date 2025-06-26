@@ -9,9 +9,6 @@ pub const MAX_SLOTS_PER_EPOCH: usize = 10000;
 // The actual size includes slot data (slots.len() * 8).
 pub const SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE: usize = 8 + 2 + 1 + 4;
 
-// Pause state account size: 8 (discriminator) + 32 (authority) + 1 (is_paused) + 1 (bump)
-// This account stores the global pause state for emergency situations.
-pub const PAUSE_STATE_ACCOUNT_SIZE: usize = 8 + 32 + 1 + 1;
 
 declare_id!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
 
@@ -26,7 +23,6 @@ pub mod saguaro_gatekeeper {
     /// - Requires multisig authority as signer
     /// - Enforces maximum slot limits to prevent DoS attacks
     /// - Manages rent-exemption through proper lamport transfers
-    /// - Subject to pause mechanism for emergency situations
     pub fn set_sandwich_validators(
         ctx: Context<SetSandwichValidators>,
         epoch_arg: u16,
@@ -41,7 +37,6 @@ pub mod saguaro_gatekeeper {
     /// # Security Notes:
     /// - Requires multisig authority as signer
     /// - Validates PDA existence and authority match
-    /// - Subject to pause mechanism for emergency situations
     /// - Validates slot limits and prevents duplicates
     pub fn update_sandwich_validator(
         ctx: Context<UpdateSandwichValidator>,
@@ -59,8 +54,7 @@ pub mod saguaro_gatekeeper {
     /// # CPI Safety:
     /// - Returns Ok if PDA doesn't exist (allows normal operation)
     /// - Returns SlotIsGated error only if slot is explicitly gated
-    /// - NOT subject to pause mechanism to maintain CPI compatibility
-    /// - Always performs validation regardless of system pause state
+    /// - Always performs validation for CPI compatibility
     /// - Derives current epoch and slot from Clock sysvar internally
     pub fn validate_sandwich_validators(
         ctx: Context<ValidateSandwichValidators>,
@@ -73,7 +67,6 @@ pub mod saguaro_gatekeeper {
     /// # Security Notes:
     /// - Only allows closing PDAs for past epochs
     /// - Requires multisig authority as signer
-    /// - Subject to pause mechanism for emergency situations
     pub fn close_sandwich_validator(
         ctx: Context<CloseSandwichValidator>,
         epoch_to_close: u16,
@@ -81,44 +74,6 @@ pub mod saguaro_gatekeeper {
         instructions::close_sandwich_validator_handler(ctx, epoch_to_close)
     }
 
-    /// Initialize the pause state for the program.
-    /// This creates a global pause state PDA that can be used to pause administrative operations.
-    /// 
-    /// # Security Notes:
-    /// - Can only be called once to initialize the pause state
-    /// - Requires multisig authority as signer
-    /// - Does not affect the validate instruction to maintain CPI compatibility
-    pub fn initialize_pause_state(
-        ctx: Context<InitializePauseState>,
-    ) -> Result<()> {
-        instructions::initialize_pause_state_handler(ctx)
-    }
-
-    /// Pause or unpause administrative operations of the program.
-    /// When paused, set, update, and close operations will fail gracefully.
-    /// 
-    /// # Security Notes:
-    /// - Only multisig authority can pause/unpause
-    /// - Validate instruction remains unaffected for CPI safety
-    /// - Fails gracefully with ProgramPaused error for CPI callers
-    pub fn set_pause_state(
-        ctx: Context<SetPauseState>,
-        is_paused: bool,
-    ) -> Result<()> {
-        instructions::set_pause_state_handler(ctx, is_paused)
-    }
-
-    /// Close the pause state PDA and refund rent to the multisig authority.
-    /// 
-    /// # Security Notes:
-    /// - Requires multisig authority as signer and must match stored authority
-    /// - Permanently removes pause functionality until re-initialized
-    /// - Returns all lamports to the authority account
-    pub fn close_pause_state(
-        ctx: Context<ClosePauseState>,
-    ) -> Result<()> {
-        instructions::close_pause_state_handler(ctx)
-    }
 }
 
 /// Account storing the validator slot assignments for a specific epoch.
@@ -153,12 +108,6 @@ pub struct SetSandwichValidators<'info> {
     pub sandwich_validators: Account<'info, SandwichValidators>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
-    /// CHECK: This account is validated in the pause_utils::check_not_paused function
-    #[account(
-        seeds = [b"pause_state"],
-        bump
-    )]
-    pub pause_state: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -188,12 +137,6 @@ pub struct UpdateSandwichValidator<'info> {
 
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
-    /// CHECK: This account is validated in the pause_utils::check_not_paused function
-    #[account(
-        seeds = [b"pause_state"],
-        bump
-    )]
-    pub pause_state: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -211,72 +154,9 @@ pub struct CloseSandwichValidator<'info> {
     pub sandwich_validators: Account<'info, SandwichValidators>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
-    /// CHECK: This account is validated in the pause_utils::check_not_paused function
-    #[account(
-        seeds = [b"pause_state"],
-        bump
-    )]
-    pub pause_state: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
-/// Accounts for the `initialize_pause_state` instruction.
-#[derive(Accounts)]
-pub struct InitializePauseState<'info> {
-    #[account(
-        init,
-        payer = multisig_authority,
-        space = PAUSE_STATE_ACCOUNT_SIZE,
-        seeds = [b"pause_state"],
-        bump
-    )]
-    pub pause_state: Account<'info, PauseState>,
-    #[account(mut)]
-    pub multisig_authority: Signer<'info>,
-    pub system_program: Program<'info, System>,
-}
-
-/// Accounts for the `set_pause_state` instruction.
-#[derive(Accounts)]
-#[instruction(is_paused: bool)]
-pub struct SetPauseState<'info> {
-    #[account(
-        mut,
-        seeds = [b"pause_state"],
-        bump = pause_state.bump,
-        constraint = pause_state.multisig_authority == multisig_authority.key() @ GatekeeperError::AuthorityMismatch
-    )]
-    pub pause_state: Account<'info, PauseState>,
-    #[account(mut)]
-    pub multisig_authority: Signer<'info>,
-}
-
-/// Accounts for the `close_pause_state` instruction.
-#[derive(Accounts)]
-pub struct ClosePauseState<'info> {
-    #[account(
-        mut,
-        seeds = [b"pause_state"],
-        bump = pause_state.bump,
-        close = multisig_authority,
-        constraint = pause_state.multisig_authority == multisig_authority.key() @ GatekeeperError::AuthorityMismatch
-    )]
-    pub pause_state: Account<'info, PauseState>,
-    #[account(mut)]
-    pub multisig_authority: Signer<'info>,
-}
-
-/// Account storing the global pause state for the program.
-#[account]
-#[derive(Debug)]
-pub struct PauseState {
-    /// The public key of the multisig authority responsible for managing this entry.
-    pub multisig_authority: Pubkey, // Squads multisig account
-    /// The canonical bump seed used for PDA derivation.
-    pub bump: u8,
-    /// A boolean indicating whether the program is paused.
-    pub is_paused: bool,
-}
 
 /// Events emitted by the Saguaro Gatekeeper program for monitoring
 #[event]
@@ -301,21 +181,6 @@ pub struct SandwichValidatorsClosed {
     pub epoch: u16,
 }
 
-#[event]
-pub struct PauseStateChanged {
-    pub authority: Pubkey,
-    pub is_paused: bool,
-}
-
-#[event]
-pub struct PauseStateInitialized {
-    pub authority: Pubkey,
-}
-
-#[event]
-pub struct PauseStateClosed {
-    pub authority: Pubkey,
-}
 
 /// Custom error codes for the Saguaro Gatekeeper program.
 #[error_code]
@@ -344,8 +209,6 @@ pub enum GatekeeperError {
     DuplicateSlots,
     #[msg("Empty slot list may not be intentional.")]
     EmptySlotList,
-    #[msg("The program is currently paused and cannot perform this operation.")]
-    ProgramPaused,
     #[msg("Slot number is outside the acceptable range.")]
     SlotOutOfRange,
     #[msg("Missing sandwich validators account in remaining_accounts.")]

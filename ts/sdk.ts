@@ -10,12 +10,6 @@ import { SaguaroGatekeeper } from "../target/types/saguaro_gatekeeper";
 export const SANDWICH_VALIDATORS_SEED_PREFIX = "sandwich_validators";
 
 /**
- * The PDA seed prefix for the PauseState account.
- * This must match the value in the Rust program.
- */
-export const PAUSE_STATE_SEED_PREFIX = "pause_state";
-
-/**
  * Maximum number of slots allowed per transaction.
  * This must match the value in the Rust program.
  */
@@ -51,27 +45,10 @@ export const getSandwichValidatorsPda = (
   return { pda, bump };
 };
 
-/**
- * Derives the Program Derived Address (PDA) for the global PauseState account.
- *
- * @param programId The program ID.
- * @returns An object containing the PDA public key (`pda`) and the bump seed (`bump`).
- */
-export const getPauseStatePda = (
-  programId: PublicKey
-): { pda: PublicKey; bump: number } => {
-  const [pda, bump] = PublicKey.findProgramAddressSync(
-    [Buffer.from(PAUSE_STATE_SEED_PREFIX)],
-    programId
-  );
-  return { pda, bump };
-};
-
 // --- Instruction Wrapper Functions ---
 
 /**
  * Creates a MethodsBuilder to call the `setSandwichValidators` instruction.
- * This instruction is subject to the pause mechanism.
  */
 export const setSandwichValidators = (
   program: Program<SaguaroGatekeeper>,
@@ -91,14 +68,12 @@ export const setSandwichValidators = (
     new anchor.BN(args.epoch),
     program.programId
   );
-  const { pda: pauseStatePda } = getPauseStatePda(program.programId);
 
   return program.methods
     .setSandwichValidators(args.epoch, args.slots)
     .accounts({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
-      pauseState: pauseStatePda,
       systemProgram: SystemProgram.programId,
     } as any);
 };
@@ -106,7 +81,6 @@ export const setSandwichValidators = (
 /**
  * Creates a MethodsBuilder to call the `updateSandwichValidator` instruction.
  * This instruction supports both adding new slots and removing existing slots.
- * This instruction is subject to the pause mechanism.
  */
 export const updateSandwichValidator = (
   program: Program<SaguaroGatekeeper>,
@@ -138,14 +112,12 @@ export const updateSandwichValidator = (
     new anchor.BN(args.epoch),
     program.programId
   );
-  const { pda: pauseStatePda } = getPauseStatePda(program.programId);
 
   return program.methods
     .updateSandwichValidator(args.epoch, newSlots, removeSlots)
     .accounts({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
-      pauseState: pauseStatePda,
       systemProgram: SystemProgram.programId,
     } as any);
 };
@@ -200,7 +172,6 @@ export const validateSandwichValidators = async (
 
 /**
  * Creates a MethodsBuilder to call the `closeSandwichValidator` instruction.
- * This instruction is subject to the pause mechanism.
  */
 export const closeSandwichValidator = (
   program: Program<SaguaroGatekeeper>,
@@ -214,59 +185,13 @@ export const closeSandwichValidator = (
     new anchor.BN(args.epoch),
     program.programId
   );
-  const { pda: pauseStatePda } = getPauseStatePda(program.programId);
 
   return program.methods
     .closeSandwichValidator(args.epoch)
     .accounts({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
-      pauseState: pauseStatePda,
       systemProgram: SystemProgram.programId,
     } as any);
 };
 
-/**
- * Creates a MethodsBuilder to call the `initializePauseState` instruction.
- * This instruction creates the global pause state PDA that controls emergency pause functionality.
- * This instruction can only be called once to initialize the pause state.
- */
-export const initializePauseState = (
-  program: Program<SaguaroGatekeeper>,
-  args: {
-    multisigAuthority: PublicKey;
-  }
-) => {
-  const { pda: pauseStatePda } = getPauseStatePda(program.programId);
-
-  return program.methods
-    .initializePauseState()
-    .accounts({
-      pauseState: pauseStatePda,
-      multisigAuthority: args.multisigAuthority,
-      systemProgram: SystemProgram.programId,
-    } as any);
-};
-
-/**
- * Creates a MethodsBuilder to call the `setPauseState` instruction.
- * This instruction allows the multisig authority to pause or unpause the program's administrative operations.
- * When paused, set, update, and close operations will fail gracefully with ProgramPaused error.
- * The validate instruction remains unaffected to maintain CPI compatibility.
- */
-export const setPauseState = (
-  program: Program<SaguaroGatekeeper>,
-  args: {
-    multisigAuthority: PublicKey;
-    isPaused: boolean;
-  }
-) => {
-  const { pda: pauseStatePda } = getPauseStatePda(program.programId);
-
-  return program.methods
-    .setPauseState(args.isPaused)
-    .accounts({
-      pauseState: pauseStatePda,
-      multisigAuthority: args.multisigAuthority,
-    } as any);
-};

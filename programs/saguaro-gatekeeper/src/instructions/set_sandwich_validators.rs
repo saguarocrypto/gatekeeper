@@ -1,11 +1,8 @@
 use anchor_lang::prelude::*;
-use crate::{GatekeeperError, SetSandwichValidators, SandwichValidatorsSet, MAX_SLOTS_PER_TRANSACTION, instructions::pause_utils};
+use crate::{GatekeeperError, SetSandwichValidators, SandwichValidatorsSet, MAX_SLOTS_PER_TRANSACTION};
 
 /// Handler for the `set_sandwich_validators` instruction.
-/// This instruction is subject to the pause mechanism.
 pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: Vec<u64>) -> Result<()> {
-    // Check if the program is paused before proceeding
-    pause_utils::check_not_paused(&ctx.accounts.pause_state)?;
 
     msg!("Setting sandwich validators for epoch: {}", epoch_arg);
     msg!("Number of slots: {}", slots_arg.len());

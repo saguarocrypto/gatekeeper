@@ -25,9 +25,12 @@ pub fn handler(ctx: Context<CloseSandwichValidator>, epoch_to_close: u16) -> Res
         return err!(GatekeeperError::EpochNotFinished);
     }
 
-    msg!("Closing SandwichValidators PDA for epoch {}", epoch);
-    msg!("Current epoch: {}, closing epoch: {}", current_epoch, epoch_to_close);
-    msg!("Rent will be returned to authority: {}", authority_key);
+    #[cfg(feature = "debug-logs")]
+    {
+        msg!("Closing SandwichValidators PDA for epoch {}", epoch);
+        msg!("Current epoch: {}, closing epoch: {}", current_epoch, epoch_to_close);
+        msg!("Rent will be returned to authority: {}", authority_key);
+    }
     
     // Anchor's `close` constraint in the account definition handles:
     // 1. PDA validation (seeds + bump)

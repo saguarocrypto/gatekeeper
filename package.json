@@ -2,7 +2,9 @@
   "license": "ISC",
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
-    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"
+    "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
+    "test:devnet": "chmod +x scripts/run_devnet_tests.sh && ./scripts/run_devnet_tests.sh",
+    "test:devnet-quick": "npx ts-node scripts/devnet_compute_test.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1"
@@ -14,7 +16,9 @@
     "@types/bn.js": "^5.1.0",
     "@types/chai": "^4.3.0",
     "@types/mocha": "^9.0.0",
+    "@types/node": "^20.0.0",
     "typescript": "^5.7.3",
-    "prettier": "^2.6.2"
+    "prettier": "^2.6.2",
+    "ts-node": "^10.9.0"
   }
 }

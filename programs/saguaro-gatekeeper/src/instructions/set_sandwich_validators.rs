@@ -1,12 +1,14 @@
 use anchor_lang::prelude::*;
-use crate::{GatekeeperError, SetSandwichValidators, SandwichValidatorsSet, SandwichValidators, MAX_SLOTS_PER_TRANSACTION, SLOTS_PER_EPOCH, INITIAL_BITMAP_SIZE_BYTES, SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE};
+use crate::{GatekeeperError, SetSandwichValidators, SandwichValidatorsSet, MAX_SLOTS_PER_TRANSACTION, SLOTS_PER_EPOCH, INITIAL_BITMAP_SIZE_BYTES, SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE};
 
 /// Handler for the `set_sandwich_validators` instruction.
+/// 
+/// # Compute Optimization
+/// This handler uses direct memory operations to minimize compute usage:
+/// - Optimized duplicate checking with sorting for small arrays
+/// - Direct bitmap writes without full struct serialization
+/// - Minimal memory allocations
 pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: Vec<u64>) -> Result<()> {
-
-    msg!("Setting sandwich validators for epoch: {}", epoch_arg);
-    msg!("Number of slots: {}", slots_arg.len());
-
     // Validate the slots array length to prevent excessive data usage per transaction
     if slots_arg.len() > MAX_SLOTS_PER_TRANSACTION {
         return err!(GatekeeperError::TooManySlots);
@@ -14,6 +16,7 @@ pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: V
 
     // Check for empty slot array (issue warning but allow)
     if slots_arg.is_empty() {
+        #[cfg(feature = "debug-logs")]
         msg!("Warning: Setting empty slot list for epoch {}", epoch_arg);
     }
 
@@ -21,20 +24,35 @@ pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: V
     let epoch_start_slot = (epoch_arg as u64) * SLOTS_PER_EPOCH as u64;
     let epoch_end_slot = epoch_start_slot + SLOTS_PER_EPOCH as u64;
 
-    // Check for duplicate slots and validate slot ranges
-    let mut unique_slots = std::collections::HashSet::new();
-    for slot in &slots_arg {
-        if !unique_slots.insert(*slot) {
-            return err!(GatekeeperError::DuplicateSlots);
-        }
-
-        // Validate slot is within the epoch boundaries
-        if *slot < epoch_start_slot || *slot >= epoch_end_slot {
-            msg!(
-                "Error: Slot {} is outside epoch {} boundaries [{}, {})",
-                slot, epoch_arg, epoch_start_slot, epoch_end_slot
-            );
+    // Optimized duplicate checking - use sorting for small arrays
+    if !slots_arg.is_empty() && slots_arg.len() <= 20 {
+        let mut sorted_slots = slots_arg.clone();
+        sorted_slots.sort_unstable();
+        
+        // Check first slot range
+        if sorted_slots[0] < epoch_start_slot || sorted_slots[0] >= epoch_end_slot {
             return err!(GatekeeperError::SlotOutOfRange);
+        }
+        
+        // Check duplicates and ranges in single pass
+        for i in 1..sorted_slots.len() {
+            if sorted_slots[i] == sorted_slots[i-1] {
+                return err!(GatekeeperError::DuplicateSlots);
+            }
+            if sorted_slots[i] < epoch_start_slot || sorted_slots[i] >= epoch_end_slot {
+                return err!(GatekeeperError::SlotOutOfRange);
+            }
+        }
+    } else if !slots_arg.is_empty() {
+        // Use HashSet for larger arrays
+        let mut unique_slots = std::collections::HashSet::with_capacity(slots_arg.len());
+        for slot in &slots_arg {
+            if !unique_slots.insert(*slot) {
+                return err!(GatekeeperError::DuplicateSlots);
+            }
+            if *slot < epoch_start_slot || *slot >= epoch_end_slot {
+                return err!(GatekeeperError::SlotOutOfRange);
+            }
         }
     }
 
@@ -44,7 +62,7 @@ pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: V
 
     // Check if account needs to be created
     if sandwich_validators_ai.data_is_empty() {
-        // Create the account with the full size (now within 10KB limit)
+        // Create the account with the full size
         let rent = Rent::get()?;
         let account_size = SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE + INITIAL_BITMAP_SIZE_BYTES;
         let lamports = rent.minimum_balance(account_size);
@@ -72,8 +90,6 @@ pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: V
                 &[ctx.bumps.sandwich_validators],
             ]],
         )?;
-        
-        msg!("Successfully created account with size: {} bytes", account_size);
     } else {
         // Account exists, verify it's owned by our program
         if sandwich_validators_ai.owner != ctx.program_id {
@@ -81,24 +97,55 @@ pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: V
         }
     }
 
-    // Create and serialize the SandwichValidators data
-    let mut sandwich_validators = SandwichValidators {
-        epoch: epoch_arg,
-        slots: vec![0u8; INITIAL_BITMAP_SIZE_BYTES], // Initialize bitmap with all slots ungated
-        bump: ctx.bumps.sandwich_validators,
-    };
-
-    // Set the specified slots as gated in the bitmap
-    for slot in &slots_arg {
-        sandwich_validators.set_slot_gated(*slot, true)?;
-    }
-
-    // Serialize and write the data to the account
+    // Direct memory write optimization
     let mut data = sandwich_validators_ai.try_borrow_mut_data()?;
-    let mut writer: &mut [u8] = &mut data;
-    sandwich_validators.try_serialize(&mut writer)?;
     
-    msg!("Successfully set sandwich validators for epoch {} with {} gated slots", epoch_arg, slots_arg.len());
+    // Account structure constants
+    const DISCRIMINATOR_SIZE: usize = 8;
+    const EPOCH_SIZE: usize = 2;
+    const VEC_LEN_SIZE: usize = 4;
+    const HEADER_SIZE: usize = DISCRIMINATOR_SIZE + EPOCH_SIZE + VEC_LEN_SIZE;
+    
+    // Write discriminator
+    // The discriminator for SandwichValidators account
+    const DISCRIMINATOR: [u8; 8] = [128, 230, 30, 91, 150, 127, 140, 15];
+    data[0..8].copy_from_slice(&DISCRIMINATOR);
+    
+    // Write epoch
+    data[8..10].copy_from_slice(&epoch_arg.to_le_bytes());
+    
+    // Write vector length
+    data[10..14].copy_from_slice(&(INITIAL_BITMAP_SIZE_BYTES as u32).to_le_bytes());
+    
+    // Initialize bitmap area to zero (slots ungated by default)
+    // Use fill() which may be vectorized by the compiler
+    data[HEADER_SIZE..HEADER_SIZE + INITIAL_BITMAP_SIZE_BYTES].fill(0);
+    
+    // Set the specified slots as gated in the bitmap using direct bit manipulation
+    for slot in &slots_arg {
+        let slot_offset = (*slot - epoch_start_slot) as usize;
+        let max_trackable_slots = INITIAL_BITMAP_SIZE_BYTES * 8;
+        
+        // Skip slots that are beyond the initial bitmap capacity
+        // These will need to be set after the PDA is expanded
+        if slot_offset >= max_trackable_slots {
+            #[cfg(feature = "debug-logs")]
+            msg!("Skipping slot {} (offset {}) - beyond initial bitmap capacity ({})", slot, slot_offset, max_trackable_slots);
+            continue;
+        }
+        
+        let byte_index = slot_offset / 8;
+        let bit_index = slot_offset % 8;
+        let byte_pos = HEADER_SIZE + byte_index;
+        
+        // Set the bit
+        data[byte_pos] |= 1 << bit_index;
+    }
+    
+    // Write bump at the end
+    data[HEADER_SIZE + INITIAL_BITMAP_SIZE_BYTES] = ctx.bumps.sandwich_validators;
+    
+    drop(data);
     
     // Emit event for monitoring
     emit!(SandwichValidatorsSet {

@@ -176,20 +176,28 @@ export const validateSandwichValidators = async (
   program: Program<SaguaroGatekeeper>,
   args: {
     multisigAuthority: PublicKey;
+    epoch?: number; // Optional: specify epoch manually for testing
   }
 ) => {
-  // Get epoch info from the connection
-  const epochInfo = await program.provider.connection.getEpochInfo("processed");
+  let targetEpoch: number;
   
-  // In local test validators, the epoch is typically 0 regardless of slot
-  // The Clock sysvar will also report epoch 0
-  const currentEpoch = epochInfo.epoch;
+  if (args.epoch !== undefined) {
+    // Use manually specified epoch (for testing)
+    targetEpoch = args.epoch;
+  } else {
+    // Get epoch info from the connection
+    const epochInfo = await program.provider.connection.getEpochInfo("processed");
+    
+    // In local test validators, the epoch is typically 0 regardless of slot
+    // The Clock sysvar will also report epoch 0
+    targetEpoch = epochInfo.epoch;
+  }
   
   
-  // Derive the PDA for the current epoch
+  // Derive the PDA for the target epoch
   const { pda } = getSandwichValidatorsPda(
     args.multisigAuthority,
-    new anchor.BN(currentEpoch),
+    new anchor.BN(targetEpoch),
     program.programId
   );
   
@@ -207,6 +215,32 @@ export const validateSandwichValidators = async (
         isSigner: false,
       },
     ]);
+};
+
+/**
+ * Creates a MethodsBuilder to call the `expandSandwichValidators` instruction.
+ * This expands an existing SandwichValidators PDA to full bitmap capacity.
+ */
+export const expandSandwichValidators = (
+  program: Program<SaguaroGatekeeper>,
+  args: {
+    epoch: number;
+    multisigAuthority: PublicKey;
+  }
+) => {
+  const { pda } = getSandwichValidatorsPda(
+    args.multisigAuthority,
+    new anchor.BN(args.epoch),
+    program.programId
+  );
+
+  return program.methods
+    .expandSandwichValidators(args.epoch)
+    .accounts({
+      sandwichValidators: pda,
+      multisigAuthority: args.multisigAuthority,
+      systemProgram: SystemProgram.programId,
+    } as any);
 };
 
 /**

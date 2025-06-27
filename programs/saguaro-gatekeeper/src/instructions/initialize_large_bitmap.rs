@@ -11,8 +11,11 @@ pub fn handler(ctx: Context<InitializeLargeBitmap>, epoch_arg: u16) -> Result<()
     let rent = Rent::get()?;
     let required_lamports = rent.minimum_balance(INITIAL_ACCOUNT_SIZE);
 
-    msg!("Initializing large bitmap account with {} bytes", INITIAL_ACCOUNT_SIZE);
-    msg!("Required lamports: {}", required_lamports);
+    #[cfg(feature = "debug-logs")]
+    {
+        msg!("Initializing large bitmap account with {} bytes", INITIAL_ACCOUNT_SIZE);
+        msg!("Required lamports: {}", required_lamports);
+    }
 
     // Create the account with initial 10KB allocation
     let bump = ctx.bumps.large_bitmap;
@@ -58,13 +61,15 @@ pub fn handler(ctx: Context<InitializeLargeBitmap>, epoch_arg: u16) -> Result<()
     account_data[11..16].fill(0);
     
     // Zero out the bitmap data (remaining bytes)
-    for byte in account_data[16..].iter_mut() {
-        *byte = 0;
-    }
+    // Use fill() which may be vectorized by the compiler
+    account_data[16..].fill(0);
 
-    msg!("Large bitmap account initialized successfully");
-    msg!("Account size: {} bytes", account_data.len());
-    msg!("Epoch: {}, Bump: {}", epoch_arg, bump);
+    #[cfg(feature = "debug-logs")]
+    {
+        msg!("Large bitmap account initialized successfully");
+        msg!("Account size: {} bytes", account_data.len());
+        msg!("Epoch: {}, Bump: {}", epoch_arg, bump);
+    }
 
     Ok(())
 }

@@ -1,7 +1,29 @@
+#![allow(unexpected_cfgs)]
+#![allow(deprecated)]
+
 use anchor_lang::prelude::*;
 
 pub mod constants;
 pub mod instructions;
+pub mod benchmarks;
+
+/// Helper functions for compute optimization
+pub mod compute_optimization {
+    /// Inline helper to calculate slot offset within an epoch
+    #[inline(always)]
+    pub fn calculate_slot_offset(slot: u64, epoch: u16) -> usize {
+        let epoch_start = (epoch as u64) * crate::SLOTS_PER_EPOCH as u64;
+        (slot - epoch_start) as usize
+    }
+    
+    /// Inline helper to calculate byte and bit position for a slot
+    #[inline(always)]
+    pub fn calculate_bit_position(slot_offset: usize) -> (usize, u8) {
+        let byte_index = slot_offset / 8;
+        let bit_index = (slot_offset % 8) as u8;
+        (byte_index, bit_index)
+    }
+}
 
 pub const MAX_SLOTS_PER_TRANSACTION: usize = 100;
 pub const SLOTS_PER_EPOCH: usize = 432_000;
@@ -24,7 +46,7 @@ pub const MAX_ACCOUNT_SIZE: usize = MAX_STORAGE_SIZE; // 10MB maximum
 pub const MAX_REALLOC_SIZE: usize = 10240; // Solana's 10KB reallocation limit per operation
 
 
-declare_id!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
+declare_id!("DApD5AGWB5TcN83q3NRGGdQtWa3i7w1W7rVUzsvFLBqe");
 
 #[program]
 pub mod saguaro_gatekeeper {
@@ -86,6 +108,20 @@ pub mod saguaro_gatekeeper {
         epoch_to_close: u16,
     ) -> Result<()> {
         instructions::close_sandwich_validator_handler(ctx, epoch_to_close)
+    }
+
+    /// Expand a SandwichValidators PDA to full bitmap capacity.
+    /// This allows the PDA to track all slots in an epoch (432,000 slots).
+    /// 
+    /// # Security Notes:
+    /// - Requires multisig authority as signer
+    /// - Uses realloc to expand account incrementally (10KB per call)
+    /// - Maintains rent exemption through additional lamport transfers
+    pub fn expand_sandwich_validators(
+        ctx: Context<ExpandSandwichValidators>,
+        epoch_arg: u16,
+    ) -> Result<()> {
+        instructions::expand_sandwich_validators_handler(ctx, epoch_arg)
     }
 
     /// Initialize a large bitmap account with 10KB initial allocation.
@@ -161,16 +197,16 @@ impl SandwichValidators {
         }
         
         let slot_offset = (slot - epoch_start) as usize;
-        let max_trackable_slots = INITIAL_BITMAP_SIZE_BYTES * 8;
         
-        // If slot is beyond our bitmap capacity, we assume it's not gated
-        if slot_offset >= max_trackable_slots {
+        // Check if slot is within the epoch range
+        if slot_offset >= SLOTS_PER_EPOCH {
             return false;
         }
         
         let byte_index = slot_offset / 8;
         let bit_index = slot_offset % 8;
         
+        // If the bitmap hasn't been expanded to cover this slot, assume not gated
         if byte_index >= self.slots.len() {
             return false;
         }
@@ -179,6 +215,7 @@ impl SandwichValidators {
     }
     
     /// Sets a slot as gated within this epoch
+    /// Now supports the full epoch range when bitmap is expanded
     pub fn set_slot_gated(&mut self, slot: u64, gated: bool) -> Result<()> {
         let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
         let epoch_end = epoch_start + SLOTS_PER_EPOCH as u64;
@@ -189,23 +226,27 @@ impl SandwichValidators {
         }
         
         let slot_offset = (slot - epoch_start) as usize;
-        let max_trackable_slots = INITIAL_BITMAP_SIZE_BYTES * 8; // Maximum slots we can track
         
-        // Check if slot is within our bitmap capacity
-        if slot_offset >= max_trackable_slots {
-            // For slots beyond our bitmap capacity, we cannot track them
-            // This is a limitation due to Solana's 10KB account size constraint
-            msg!("Warning: Slot {} is beyond trackable range (max offset: {})", slot, max_trackable_slots - 1);
+        // Check if slot is within the full epoch range
+        if slot_offset >= SLOTS_PER_EPOCH {
             return err!(GatekeeperError::SlotOutOfRange);
-        }
-        
-        // Ensure bitmap is properly initialized
-        if self.slots.len() != INITIAL_BITMAP_SIZE_BYTES {
-            self.slots.resize(INITIAL_BITMAP_SIZE_BYTES, 0);
         }
         
         let byte_index = slot_offset / 8;
         let bit_index = slot_offset % 8;
+        
+        // Ensure bitmap is large enough to contain this slot
+        let required_size = byte_index + 1;
+        if self.slots.len() < required_size {
+            // Only expand up to the full bitmap size
+            let expand_to = required_size.min(FULL_BITMAP_SIZE_BYTES);
+            self.slots.resize(expand_to, 0);
+        }
+        
+        // Check if we have enough space after expansion
+        if byte_index >= self.slots.len() {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
         
         if gated {
             self.slots[byte_index] |= 1 << bit_index;
@@ -310,18 +351,59 @@ impl LargeBitmap {
         Ok(())
     }
 
-    /// Sets multiple slots as gated
+    /// Sets multiple slots as gated with batch optimization
+    /// Groups slots by byte to minimize memory access
     pub fn set_slots_gated(&self, slots: &[u64], gated: bool, account_data: &mut [u8]) -> Result<()> {
+        let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
+        let bitmap = self.bitmap_data_mut(account_data);
+        
+        // Group slots by byte index for batch operations
+        let mut byte_operations: std::collections::BTreeMap<usize, Vec<u8>> = std::collections::BTreeMap::new();
+        
         for &slot in slots {
-            self.set_slot_gated(slot, gated, account_data)?;
+            if slot < epoch_start || slot >= epoch_start + SLOTS_PER_EPOCH as u64 {
+                return err!(GatekeeperError::SlotOutOfRange);
+            }
+            
+            let slot_offset = (slot - epoch_start) as usize;
+            let byte_index = slot_offset / 8;
+            let bit_index = (slot_offset % 8) as u8;
+            
+            if byte_index >= bitmap.len() {
+                return err!(GatekeeperError::SlotOutOfRange);
+            }
+            
+            byte_operations.entry(byte_index).or_insert_with(Vec::new).push(bit_index);
         }
+        
+        // Apply batch operations per byte
+        for (byte_index, bit_indices) in byte_operations {
+            let byte = &mut bitmap[byte_index];
+            for bit_index in bit_indices {
+                if gated {
+                    *byte |= 1 << bit_index;
+                } else {
+                    *byte &= !(1 << bit_index);
+                }
+            }
+        }
+        
         Ok(())
     }
 
     /// Clears all slots (sets all to ungated)
+    /// Uses unsafe pointer operations for maximum performance
     pub fn clear_all_slots(&self, account_data: &mut [u8]) {
         let bitmap = self.bitmap_data_mut(account_data);
-        bitmap.fill(0);
+        
+        // For large clears, use unsafe pointer operations
+        if bitmap.len() >= 1024 {
+            unsafe {
+                std::ptr::write_bytes(bitmap.as_mut_ptr(), 0, bitmap.len());
+            }
+        } else {
+            bitmap.fill(0);
+        }
     }
 }
 
@@ -370,6 +452,22 @@ pub struct UpdateSandwichValidator<'info> {
     pub system_program: Program<'info, System>,
 }
 
+
+/// Accounts for the `expand_sandwich_validators` instruction.
+#[derive(Accounts)]
+#[instruction(epoch_arg: u16)]
+pub struct ExpandSandwichValidators<'info> {
+    /// CHECK: This account is manually validated in the instruction handler
+    #[account(
+        mut,
+        seeds = [b"sandwich_validators", multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
+        bump
+    )]
+    pub sandwich_validators: AccountInfo<'info>,
+    #[account(mut)]
+    pub multisig_authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
 
 /// Accounts for the `close_sandwich_validator` instruction.
 #[derive(Accounts)]

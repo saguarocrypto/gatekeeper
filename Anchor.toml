@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-saguaro_gatekeeper = "8cC3gnBoV9q5ucHroDNwbRihWmFtxew9QAWrZDruqWbf"
+saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
 
 [programs.localnet]
-saguaro_gatekeeper = "8cC3gnBoV9q5ucHroDNwbRihWmFtxew9QAWrZDruqWbf"
+saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
 
 [registry]
 url = "https://api.apr.dev"

@@ -7,12 +7,17 @@ pub mod constants;
 pub mod instructions;
 pub mod benchmarks;
 
+// Re-export all constants for backward compatibility
+pub use constants::*;
+
 /// Helper functions for compute optimization
 pub mod compute_optimization {
+    use crate::constants::SLOTS_PER_EPOCH;
+    
     /// Inline helper to calculate slot offset within an epoch
     #[inline(always)]
     pub fn calculate_slot_offset(slot: u64, epoch: u16) -> usize {
-        let epoch_start = (epoch as u64) * crate::SLOTS_PER_EPOCH as u64;
+        let epoch_start = (epoch as u64) * SLOTS_PER_EPOCH as u64;
         (slot - epoch_start) as usize
     }
     
@@ -25,28 +30,8 @@ pub mod compute_optimization {
     }
 }
 
-pub const MAX_SLOTS_PER_TRANSACTION: usize = 100;
-pub const SLOTS_PER_EPOCH: usize = 432_000;
-pub const MAX_SLOTS_PER_EPOCH: usize = 10000;
 
-// Bitmap size for 432,000 slots per epoch
-pub const FULL_BITMAP_SIZE_BYTES: usize = 54000; // 432,000 bits / 8 = 54,000 bytes
-pub const INITIAL_BITMAP_SIZE_BYTES: usize = 9000; // Initial size within 10KB limit
-
-// Maximum storage capacity: 10MB
-pub const MAX_STORAGE_SIZE: usize = 10 * 1024 * 1024; // 10MB
-pub const MAX_BITMAP_SIZE_BYTES: usize = MAX_STORAGE_SIZE - 16; // 10MB minus metadata
-
-// Account size constants
-pub const SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE: usize = 8 + 2 + 4 + 1; // discriminator + epoch + vec_len + bump
-pub const LARGE_BITMAP_ACCOUNT_BASE_SIZE: usize = 8 + 2 + 1 + 5; // discriminator + epoch + bump + padding
-pub const INITIAL_ACCOUNT_SIZE: usize = 10240; // Initial 10KB allocation
-pub const TARGET_ACCOUNT_SIZE: usize = LARGE_BITMAP_ACCOUNT_BASE_SIZE + FULL_BITMAP_SIZE_BYTES; // 54KB for full epoch
-pub const MAX_ACCOUNT_SIZE: usize = MAX_STORAGE_SIZE; // 10MB maximum
-pub const MAX_REALLOC_SIZE: usize = 10240; // Solana's 10KB reallocation limit per operation
-
-
-declare_id!("8cC3gnBoV9q5ucHroDNwbRihWmFtxew9QAWrZDruqWbf");
+declare_id!("4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv");
 
 #[program]
 pub mod saguaro_gatekeeper {
@@ -392,18 +377,13 @@ impl LargeBitmap {
     }
 
     /// Clears all slots (sets all to ungated)
-    /// Uses unsafe pointer operations for maximum performance
+    /// Uses safe operations with performance optimization for large bitmaps
     pub fn clear_all_slots(&self, account_data: &mut [u8]) {
         let bitmap = self.bitmap_data_mut(account_data);
         
-        // For large clears, use unsafe pointer operations
-        if bitmap.len() >= 1024 {
-            unsafe {
-                std::ptr::write_bytes(bitmap.as_mut_ptr(), 0, bitmap.len());
-            }
-        } else {
-            bitmap.fill(0);
-        }
+        // Use safe fill operation for all cases - modern Rust optimizes this well
+        // The compiler will vectorize this operation for large arrays
+        bitmap.fill(0);
     }
 }
 

@@ -20,9 +20,9 @@ pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: V
         msg!("Warning: Setting empty slot list for epoch {}", epoch_arg);
     }
 
-    // Calculate valid slot range for this epoch
-    let epoch_start_slot = (epoch_arg as u64) * SLOTS_PER_EPOCH as u64;
-    let epoch_end_slot = epoch_start_slot + SLOTS_PER_EPOCH as u64;
+    // Calculate valid slot range for this epoch with overflow protection
+    let epoch_start_slot = (epoch_arg as u64).checked_mul(SLOTS_PER_EPOCH as u64).ok_or(GatekeeperError::SlotOutOfRange)?;
+    let epoch_end_slot = epoch_start_slot.checked_add(SLOTS_PER_EPOCH as u64).ok_or(GatekeeperError::SlotOutOfRange)?;
 
     // Optimized duplicate checking - use BTreeSet for simplicity and efficiency
     if !slots_arg.is_empty() {
@@ -87,10 +87,10 @@ pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: V
     const VEC_LEN_SIZE: usize = 4;
     const HEADER_SIZE: usize = DISCRIMINATOR_SIZE + EPOCH_SIZE + VEC_LEN_SIZE;
     
-    // Write discriminator
-    // The discriminator for SandwichValidators account
-    const DISCRIMINATOR: [u8; 8] = [128, 230, 30, 91, 150, 127, 140, 15];
-    data[0..8].copy_from_slice(&DISCRIMINATOR);
+    // Write discriminator - use Anchor's generated discriminator for SandwichValidators
+    use anchor_lang::Discriminator;
+    use crate::SandwichValidators;
+    data[0..8].copy_from_slice(&SandwichValidators::DISCRIMINATOR);
     
     // Write epoch
     data[8..10].copy_from_slice(&epoch_arg.to_le_bytes());
@@ -117,7 +117,12 @@ pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: V
         
         let byte_index = slot_offset / 8;
         let bit_index = slot_offset % 8;
-        let byte_pos = HEADER_SIZE + byte_index;
+        let byte_pos = HEADER_SIZE.checked_add(byte_index).ok_or(GatekeeperError::SlotOutOfRange)?;
+        
+        // Bounds check before array access
+        if byte_pos >= data.len() {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
         
         // Set the bit
         data[byte_pos] |= 1 << bit_index;

@@ -65,9 +65,9 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
     
     drop(data_borrow);
 
-    // Calculate max trackable slots based on current bitmap size
-    let max_trackable_slots = bitmap_len * 8;
-    let max_trackable_slot = epoch_start_slot + max_trackable_slots as u64;
+    // Calculate max trackable slots based on current bitmap size with overflow protection
+    let max_trackable_slots = bitmap_len.checked_mul(8).ok_or(GatekeeperError::SlotOutOfRange)?;
+    let max_trackable_slot = epoch_start_slot.checked_add(max_trackable_slots as u64).ok_or(GatekeeperError::SlotOutOfRange)?;
 
     // Optimized duplicate checking function - uses BTreeSet for simplicity and efficiency
     fn check_duplicates_and_validate(slots: &[u64], epoch_start: u64, max_trackable_slot: u64) -> Result<()> {
@@ -95,7 +95,10 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
     #[inline(always)]
     fn is_slot_gated_direct(data: &[u8], slot: u64, epoch_start: u64, bitmap_len: usize) -> bool {
         let slot_offset = (slot - epoch_start) as usize;
-        let max_trackable_slots = bitmap_len * 8;
+        let max_trackable_slots = match bitmap_len.checked_mul(8) {
+            Some(slots) => slots,
+            None => return false, // Overflow, treat as not gated
+        };
         
         if slot_offset >= max_trackable_slots {
             return false;
@@ -103,7 +106,10 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
         
         let byte_index = slot_offset / 8;
         let bit_index = slot_offset % 8;
-        let byte_pos = HEADER_SIZE + byte_index;
+        let byte_pos = match HEADER_SIZE.checked_add(byte_index) {
+            Some(pos) => pos,
+            None => return false, // Overflow, treat as not gated
+        };
         
         if byte_pos >= data.len() {
             return false;
@@ -115,7 +121,7 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
     #[inline(always)]
     fn set_slot_gated_direct(data: &mut [u8], slot: u64, epoch_start: u64, bitmap_len: usize, gated: bool) -> Result<()> {
         let slot_offset = (slot - epoch_start) as usize;
-        let max_trackable_slots = bitmap_len * 8;
+        let max_trackable_slots = bitmap_len.checked_mul(8).ok_or(GatekeeperError::SlotOutOfRange)?;
         
         if slot_offset >= max_trackable_slots {
             return err!(GatekeeperError::SlotOutOfRange);
@@ -123,7 +129,7 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
         
         let byte_index = slot_offset / 8;
         let bit_index = slot_offset % 8;
-        let byte_pos = HEADER_SIZE + byte_index;
+        let byte_pos = HEADER_SIZE.checked_add(byte_index).ok_or(GatekeeperError::SlotOutOfRange)?;
         
         if byte_pos >= data.len() {
             return err!(GatekeeperError::SlotOutOfRange);
@@ -172,8 +178,15 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
 
     drop(data);
 
-    // Use approximation for total slots to avoid expensive bit counting
-    let total_gated_slots = slots_added.saturating_add(slots_removed);
+    // For monitoring purposes, emit the net change as an approximation
+    // Note: The total_slots field is misleadingly named - it represents 
+    // an approximation for monitoring, not the actual total gated slots.
+    // Computing the actual total would require an expensive bitmap scan.
+    let net_change_approximation = if slots_added >= slots_removed {
+        slots_added - slots_removed
+    } else {
+        0 // Net decrease, show as 0 since we can't represent negative values
+    };
     
     // Emit event for monitoring
     emit!(SandwichValidatorsUpdated {
@@ -181,7 +194,7 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
         epoch: epoch_arg,
         slots_added,
         slots_removed,
-        total_slots: total_gated_slots,
+        total_slots: net_change_approximation, // WARNING: Not actual total, just net change for this operation
     });
     
     Ok(())

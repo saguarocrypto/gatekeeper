@@ -8,17 +8,21 @@ use crate::ClearData;
 /// - Uses efficient memory clearing operations
 pub fn handler(ctx: Context<ClearData>) -> Result<()> {
     let large_bitmap_account = &ctx.accounts.large_bitmap;
-    let large_bitmap = large_bitmap_account.load()?;
     
-    #[cfg(feature = "debug-logs")]
-    msg!("Clearing all data in large bitmap for epoch {}", large_bitmap.epoch);
-    
-    // Get account data for writing
+    // Get account data for writing without loading first
     let account_info = large_bitmap_account.to_account_info();
     let mut account_data = account_info.try_borrow_mut_data()?;
     
-    // Clear all slots in the bitmap
-    large_bitmap.clear_all_slots(&mut account_data);
+    #[cfg(feature = "debug-logs")]
+    {
+        // Get epoch from account data directly (bytes 8-9 after discriminator)
+        let epoch = u16::from_le_bytes([account_data[8], account_data[9]]);
+        msg!("Clearing all data in large bitmap for epoch {}", epoch);
+    }
+    
+    // Skip the discriminator + epoch + bump + padding (16 bytes total) and clear bitmap data
+    let bitmap_data = &mut account_data[16..];
+    bitmap_data.fill(0);
     
     #[cfg(feature = "debug-logs")]
     {

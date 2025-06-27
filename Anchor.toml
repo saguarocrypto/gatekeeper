@@ -15,7 +15,7 @@ saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

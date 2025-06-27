@@ -5,7 +5,6 @@ use anchor_lang::prelude::*;
 
 pub mod constants;
 pub mod instructions;
-pub mod benchmarks;
 
 // Re-export all constants for backward compatibility
 pub use constants::*;
@@ -95,19 +94,6 @@ pub mod saguaro_gatekeeper {
         instructions::close_sandwich_validator_handler(ctx, epoch_to_close)
     }
 
-    /// Expand a SandwichValidators PDA to full bitmap capacity.
-    /// This allows the PDA to track all slots in an epoch (432,000 slots).
-    /// 
-    /// # Security Notes:
-    /// - Requires multisig authority as signer
-    /// - Uses realloc to expand account incrementally (10KB per call)
-    /// - Maintains rent exemption through additional lamport transfers
-    pub fn expand_sandwich_validators(
-        ctx: Context<ExpandSandwichValidators>,
-        epoch_arg: u16,
-    ) -> Result<()> {
-        instructions::expand_sandwich_validators_handler(ctx, epoch_arg)
-    }
 
     /// Initialize a large bitmap account with 10KB initial allocation.
     /// This is the first step in the two-step allocation process.
@@ -121,20 +107,11 @@ pub mod saguaro_gatekeeper {
     /// Expand the bitmap account to full size without writing data.
     /// This is used to expand the account beyond the initial 10KB limit.
     pub fn expand_bitmap(
-        ctx: Context<ExpandAndWriteBitmap>,
+        ctx: Context<ExpandBitmap>,
     ) -> Result<()> {
         instructions::expand_bitmap_handler(ctx)
     }
 
-    /// Expand the bitmap account to full size and optionally write data.
-    /// This uses realloc() to expand beyond the initial 10KB limit.
-    pub fn expand_and_write_bitmap(
-        ctx: Context<ExpandAndWriteBitmap>,
-        data_chunk: Vec<u8>,
-        chunk_offset: u64,
-    ) -> Result<()> {
-        instructions::expand_and_write_bitmap_handler(ctx, data_chunk, chunk_offset)
-    }
 
     /// Append data to the large bitmap account.
     pub fn append_data(
@@ -436,21 +413,6 @@ pub struct UpdateSandwichValidator<'info> {
 }
 
 
-/// Accounts for the `expand_sandwich_validators` instruction.
-#[derive(Accounts)]
-#[instruction(epoch_arg: u16)]
-pub struct ExpandSandwichValidators<'info> {
-    /// CHECK: This account is manually validated in the instruction handler
-    #[account(
-        mut,
-        seeds = [b"sandwich_validators", multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
-        bump
-    )]
-    pub sandwich_validators: AccountInfo<'info>,
-    #[account(mut)]
-    pub multisig_authority: Signer<'info>,
-    pub system_program: Program<'info, System>,
-}
 
 /// Accounts for the `close_sandwich_validator` instruction.
 #[derive(Accounts)]
@@ -484,9 +446,9 @@ pub struct InitializeLargeBitmap<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Accounts for the `expand_and_write_bitmap` instruction.
+/// Accounts for the `expand_bitmap` instruction.
 #[derive(Accounts)]
-pub struct ExpandAndWriteBitmap<'info> {
+pub struct ExpandBitmap<'info> {
     /// CHECK: This account is manually validated in the instruction handler
     #[account(mut)]
     pub large_bitmap: AccountInfo<'info>,

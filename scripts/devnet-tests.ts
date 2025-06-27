@@ -6,7 +6,7 @@ import {
   setSandwichValidators,
   updateSandwichValidator,
   validateSandwichValidators,
-  expandSandwichValidators,
+  // expandSandwichValidators, // REMOVED: Function was removed from contract and SDK
   closeSandwichValidator,
   SLOTS_PER_EPOCH,
 } from "../ts/sdk";
@@ -377,11 +377,12 @@ async function main() {
   });
 
   // Test 9: Expand sandwich validators PDA
-  await runTest("Expand sandwich validators PDA", async () => {
+  // REMOVED: expandSandwichValidators functionality was removed from the contract
+  await runTest("Create sandwich validators PDA (expansion removed)", async () => {
     const epochArg = 500;
     const initialSlots = [new BN(epochArg * SLOTS_PER_EPOCH), new BN(epochArg * SLOTS_PER_EPOCH + 100)];
 
-    // First create a small PDA
+    // Create PDA with full capacity (no expansion needed)
     const setSig = await setSandwichValidators(program, {
       epoch: epochArg,
       slots: initialSlots,
@@ -396,34 +397,33 @@ async function main() {
       program.programId
     );
 
-    const beforeExpansion = await provider.connection.getAccountInfo(pda);
-    assert(beforeExpansion !== null, "PDA should exist before expansion");
-    const initialSize = beforeExpansion.data.length;
-
-    // Now expand it
-    const expandSig = await expandSandwichValidators(program, {
-      epoch: epochArg,
-      multisigAuthority: multisigAuthority.publicKey,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-
-    const afterExpansion = await provider.connection.getAccountInfo(pda);
-    assert(afterExpansion !== null, "PDA should exist after expansion");
-    assert(afterExpansion.data.length > initialSize, "PDA should be larger after expansion");
+    const pdaInfo = await provider.connection.getAccountInfo(pda);
+    assert(pdaInfo !== null, "PDA should exist after creation");
     
-    return [setSig, expandSig];
+    // NOTE: expandSandwichValidators was removed - PDA is now created with full capacity
+    console.log(`PDA created with size: ${pdaInfo.data.length} bytes (full capacity)`);
+    
+    // // Old expansion code (removed):
+    // const expandSig = await expandSandwichValidators(program, {
+    //   epoch: epochArg,
+    //   multisigAuthority: multisigAuthority.publicKey,
+    // })
+    //   .signers([multisigAuthority.payer])
+    //   .rpc();
+    
+    return [setSig];
   });
 
-  // Test 10: Validate with expanded PDA at current slot
-  await runTest("Validate with expanded PDA at current slot", async () => {
+  // Test 10: Validate with full-capacity PDA at current slot
+  // UPDATED: expandSandwichValidators was removed - PDA is created with full capacity
+  await runTest("Validate with full-capacity PDA at current slot", async () => {
     const currentSlot = await provider.connection.getSlot();
     const currentEpoch = Math.floor(currentSlot / SLOTS_PER_EPOCH);
     const epochStartSlot = currentEpoch * SLOTS_PER_EPOCH;
     const currentSlotOffset = currentSlot - epochStartSlot;
     const transactions = [];
 
-    // Create small PDA first
+    // Create PDA with full capacity (no expansion needed)
     const setSig = await setSandwichValidators(program, {
       epoch: currentEpoch,
       slots: [], // Empty initially
@@ -433,14 +433,15 @@ async function main() {
       .rpc();
     transactions.push(setSig);
 
-    // Expand the PDA
-    const expandSig = await expandSandwichValidators(program, {
-      epoch: currentEpoch,
-      multisigAuthority: multisigAuthority.publicKey,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
-    transactions.push(expandSig);
+    // NOTE: expandSandwichValidators was removed - PDA is now created with full capacity
+    // // Old expansion code (removed):
+    // const expandSig = await expandSandwichValidators(program, {
+    //   epoch: currentEpoch,
+    //   multisigAuthority: multisigAuthority.publicKey,
+    // })
+    //   .signers([multisigAuthority.payer])
+    //   .rpc();
+    // transactions.push(expandSig);
 
     // Test validation (should succeed with no gated slots)
     const tx = await validateSandwichValidators(program, {

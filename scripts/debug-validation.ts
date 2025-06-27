@@ -4,7 +4,7 @@ import { SaguaroGatekeeper } from "../target/types/saguaro_gatekeeper";
 import {
   getSandwichValidatorsPda,
   setSandwichValidators,
-  expandSandwichValidators,
+  // expandSandwichValidators, // REMOVED: Function was removed from contract and SDK
   updateSandwichValidator,
   validateSandwichValidators,
   SLOTS_PER_EPOCH,

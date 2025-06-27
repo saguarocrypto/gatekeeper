@@ -1,9 +1,9 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use crate::{ExpandAndWriteBitmap, TARGET_ACCOUNT_SIZE, MAX_REALLOC_SIZE};
+use crate::{ExpandBitmap, TARGET_ACCOUNT_SIZE, MAX_REALLOC_SIZE};
 
 pub fn handler(
-    ctx: Context<ExpandAndWriteBitmap>,
+    ctx: Context<ExpandBitmap>,
 ) -> Result<()> {
     let large_bitmap_account = &ctx.accounts.large_bitmap;
     let multisig_authority = &ctx.accounts.multisig_authority;

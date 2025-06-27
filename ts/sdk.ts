@@ -202,31 +202,6 @@ export const validateSandwichValidators = async (
     });
 };
 
-/**
- * Creates a MethodsBuilder to call the `expandSandwichValidators` instruction.
- * This expands an existing SandwichValidators PDA to full bitmap capacity.
- */
-export const expandSandwichValidators = (
-  program: Program<SaguaroGatekeeper>,
-  args: {
-    epoch: number;
-    multisigAuthority: PublicKey;
-  }
-) => {
-  const { pda } = getSandwichValidatorsPda(
-    args.multisigAuthority,
-    new anchor.BN(args.epoch),
-    program.programId
-  );
-
-  return program.methods
-    .expandSandwichValidators(args.epoch)
-    .accountsStrict({
-      sandwichValidators: pda,
-      multisigAuthority: args.multisigAuthority,
-      systemProgram: SystemProgram.programId,
-    });
-};
 
 /**
  * Creates a MethodsBuilder to call the `closeSandwichValidator` instruction.
@@ -305,35 +280,6 @@ export const expandBitmap = (
     });
 };
 
-/**
- * Creates a MethodsBuilder to call the `expandAndWriteBitmap` instruction.
- */
-export const expandAndWriteBitmap = (
-  program: Program<SaguaroGatekeeper>,
-  args: {
-    epoch: number;
-    multisigAuthority: PublicKey;
-    dataChunk: Buffer;
-    chunkOffset: number;
-  }
-) => {
-  const { pda } = getLargeBitmapPda(
-    args.multisigAuthority,
-    new anchor.BN(args.epoch),
-    program.programId
-  );
-
-  // Keep as Buffer for Borsh serialization  
-  const dataChunkArray = args.dataChunk;
-  
-  return program.methods
-    .expandAndWriteBitmap(dataChunkArray, new anchor.BN(args.chunkOffset))
-    .accountsStrict({
-      largeBitmap: pda,
-      multisigAuthority: args.multisigAuthority,
-      systemProgram: SystemProgram.programId,
-    });
-};
 
 /**
  * Creates a MethodsBuilder to call the `appendData` instruction.
@@ -431,11 +377,10 @@ export const prepareLargeBitmapTransaction = async (
     
     for (let offset = 0; offset < args.bitmapData.length; offset += chunkSize) {
       const chunk = args.bitmapData.slice(offset, offset + chunkSize);
-      const writeIx = await expandAndWriteBitmap(program, {
+      const writeIx = await appendData(program, {
         epoch: args.epoch,
         multisigAuthority: args.multisigAuthority,
-        dataChunk: chunk,
-        chunkOffset: offset,
+        data: chunk,
       }).instruction();
       writeInstructions.push(writeIx);
     }

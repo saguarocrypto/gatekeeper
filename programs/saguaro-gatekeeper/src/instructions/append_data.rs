@@ -18,15 +18,16 @@ pub fn handler(ctx: Context<AppendData>, data: Vec<u8>) -> Result<()> {
     }
     
     let large_bitmap_account = &ctx.accounts.large_bitmap;
-    let large_bitmap = large_bitmap_account.load()?;
     
     #[cfg(feature = "debug-logs")]
     msg!("Appending {} bytes of data to large bitmap", data.len());
     
-    // Get account data for writing
+    // Get account data for writing without loading first
     let account_info = large_bitmap_account.to_account_info();
     let mut account_data = account_info.try_borrow_mut_data()?;
-    let bitmap_data = large_bitmap.bitmap_data_mut(&mut account_data);
+    
+    // Skip the discriminator + epoch + bump + padding (16 bytes total)
+    let bitmap_data = &mut account_data[16..];
     
     // Write data to bitmap data section
     let max_write = data.len().min(bitmap_data.len());
@@ -35,7 +36,9 @@ pub fn handler(ctx: Context<AppendData>, data: Vec<u8>) -> Result<()> {
     #[cfg(feature = "debug-logs")]
     {
         msg!("Successfully appended {} bytes to large bitmap", max_write);
-        msg!("Bitmap epoch: {}", large_bitmap.epoch);
+        // Get epoch from account data directly (bytes 8-9 after discriminator)
+        let epoch = u16::from_le_bytes([account_data[8], account_data[9]]);
+        msg!("Bitmap epoch: {}", epoch);
     }
     
     Ok(())

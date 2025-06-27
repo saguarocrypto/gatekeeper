@@ -4,7 +4,7 @@ import { SaguaroGatekeeper } from "../target/types/saguaro_gatekeeper";
 import {
   getSandwichValidatorsPda,
   setSandwichValidators,
-  expandSandwichValidators,
+  // expandSandwichValidators, // REMOVED: Function was removed from contract and SDK
   updateSandwichValidator,
   validateSandwichValidators,
   closeSandwichValidator,
@@ -128,15 +128,19 @@ async function main() {
 
     // Step 4: Expand the PDA
     console.log(`\n${colors.cyan}Step 4: Expanding PDA to full capacity...${colors.reset}`);
-    await expandSandwichValidators(program, {
-      epoch: testEpoch,
-      multisigAuthority: wallet.publicKey,
-    })
-      .signers([wallet.payer])
-      .rpc();
+    // REMOVED: expandSandwichValidators was removed from the contract
+    // The PDA is now created with full capacity automatically
+    console.log(`${colors.yellow}NOTE: expandSandwichValidators was removed - PDA is now created with full capacity${colors.reset}`);
+    
+    // await expandSandwichValidators(program, {
+    //   epoch: testEpoch,
+    //   multisigAuthority: wallet.publicKey,
+    // })
+    //   .signers([wallet.payer])
+    //   .rpc();
 
     const afterExpansion = await connection.getAccountInfo(testPda);
-    console.log(`${colors.green}✓ PDA expanded to size: ${afterExpansion?.data.length} bytes${colors.reset}`);
+    console.log(`${colors.green}✓ PDA size: ${afterExpansion?.data.length} bytes (no expansion needed)${colors.reset}`);
 
     // Step 5: Test validation after expansion
     console.log(`\n${colors.cyan}Step 5: Testing validation after expansion...${colors.reset}`);

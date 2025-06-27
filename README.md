@@ -135,8 +135,7 @@ use anchor_lang::solana_program::{
     instruction::Instruction,
 };
 
-// Replace with the actual Gatekeeper Program ID
-declare_id!("DApD5AGWB5TcN83q3NRGGdQtWa3i7w1W7rVUzsvFLBqe");
+declare_id!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
 
 #[program]
 pub mod my_program {

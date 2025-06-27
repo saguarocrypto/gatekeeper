@@ -72,21 +72,25 @@ async function main() {
     console.log("\n2. Checking PDA structure...");
     const account = await program.account.sandwichValidators.fetch(pda);
     console.log(`Epoch: ${account.epoch}`);
-    console.log(`Bitmap length: ${account.slots.length} bytes`);
-    console.log(`Max trackable slots: ${account.slots.length * 8}`);
+    console.log(`Bump: ${account.bump}`);
+    const bitmapDataLength = pdaInfo.data.length - 16; // Header is 16 bytes for SandwichValidators
+    console.log(`Bitmap data length: ${bitmapDataLength} bytes`);
+    console.log(`Max trackable slots: ${bitmapDataLength * 8}`);
 
     // Check if the bit is actually set
     const byteIndex = Math.floor(testSlotOffset / 8);
     const bitIndex = testSlotOffset % 8;
     console.log(`\n3. Checking bit at byte ${byteIndex}, bit ${bitIndex}:`);
     
-    if (byteIndex < account.slots.length) {
-      const byte = account.slots[byteIndex];
+    // For SandwichValidators, we need to access the raw data after the header (16 bytes)
+    const bitmapStartOffset = 16; // 8 (discriminator) + 2 (epoch) + 1 (bump) + 5 (padding)
+    if (byteIndex < bitmapDataLength) {
+      const byte = pdaInfo.data[bitmapStartOffset + byteIndex];
       const bitSet = (byte >> bitIndex) & 1;
       console.log(`Byte value: 0x${byte.toString(16).padStart(2, '0')} (${byte})`);
       console.log(`Bit ${bitIndex} is: ${bitSet ? 'SET (gated)' : 'UNSET (not gated)'}`);
     } else {
-      console.log(`Byte index ${byteIndex} is beyond bitmap length ${account.slots.length}`);
+      console.log(`Byte index ${byteIndex} is beyond bitmap length ${bitmapDataLength}`);
     }
 
   } catch (error) {

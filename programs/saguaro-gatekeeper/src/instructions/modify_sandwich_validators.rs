@@ -1,26 +1,29 @@
 use anchor_lang::prelude::*;
-use crate::{UpdateSandwichValidator, SandwichValidatorsUpdated, MAX_SLOTS_PER_TRANSACTION, GatekeeperError, SLOTS_PER_EPOCH, INITIAL_BITMAP_SIZE_BYTES, FULL_BITMAP_SIZE_BYTES};
+use crate::{ModifySandwichValidators, SandwichValidatorsUpdated, MAX_SLOTS_PER_TRANSACTION, GatekeeperError, SLOTS_PER_EPOCH, INITIAL_BITMAP_SIZE_BYTES, FULL_BITMAP_SIZE_BYTES};
 
-/// Handler for the `update_sandwich_validator` instruction.
-/// This instruction supports both adding new slots and removing existing slots using bitmap operations.
+/// Handler for the `modify_sandwich_validators` instruction.
+/// 
+/// **CRUD Operation: UPDATE**
+/// This instruction supports both gating and ungating slots using bitmap operations.
+/// Use `expand_sandwich_validators_bitmap` first if you need more capacity.
 /// 
 /// # Compute Optimization
 /// This handler uses lazy loading and direct memory operations to minimize compute usage:
 /// - Avoids full deserialization of the bitmap account
 /// - Uses stack-based duplicate checking for small arrays
 /// - Performs direct bit manipulation on borrowed account data
-pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots: Vec<u64>, remove_slots: Vec<u64>) -> Result<()> {
+pub fn handler(ctx: Context<ModifySandwichValidators>, epoch_arg: u16, slots_to_gate: Vec<u64>, slots_to_ungate: Vec<u64>) -> Result<()> {
     // Validate that neither operation exceeds per-transaction limits
-    if new_slots.len() > MAX_SLOTS_PER_TRANSACTION {
+    if slots_to_gate.len() > MAX_SLOTS_PER_TRANSACTION {
         return err!(GatekeeperError::TooManySlots);
     }
 
-    if remove_slots.len() > MAX_SLOTS_PER_TRANSACTION {
+    if slots_to_ungate.len() > MAX_SLOTS_PER_TRANSACTION {
         return err!(GatekeeperError::TooManySlots);
     }
 
     // Check if both arrays are empty
-    if new_slots.is_empty() && remove_slots.is_empty() {
+    if slots_to_gate.is_empty() && slots_to_ungate.is_empty() {
         return Ok(());
     }
 
@@ -80,8 +83,8 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
     }
 
     // Validate both arrays against current bitmap capacity
-    check_duplicates_and_validate(&remove_slots, epoch_start_slot, max_trackable_slot)?;
-    check_duplicates_and_validate(&new_slots, epoch_start_slot, max_trackable_slot)?;
+    check_duplicates_and_validate(&slots_to_ungate, epoch_start_slot, max_trackable_slot)?;
+    check_duplicates_and_validate(&slots_to_gate, epoch_start_slot, max_trackable_slot)?;
 
     // Direct bit manipulation functions that work with current bitmap size
     #[inline(always)]
@@ -142,9 +145,9 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
     // Get mutable access to account data for direct bit manipulation
     let mut data = sandwich_validators_ai.try_borrow_mut_data()?;
 
-    // Step 1: Remove slots if specified
-    if !remove_slots.is_empty() {
-        for slot in &remove_slots {
+    // Step 1: Ungate slots if specified
+    if !slots_to_ungate.is_empty() {
+        for slot in &slots_to_ungate {
             if is_slot_gated_direct(&data, *slot, epoch_start_slot, bitmap_len) {
                 set_slot_gated_direct(&mut data, *slot, epoch_start_slot, bitmap_len, false)?;
                 slots_removed += 1;
@@ -152,17 +155,17 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
         }
     }
 
-    // Step 2: Add new slots if specified
-    if !new_slots.is_empty() {
+    // Step 2: Gate slots if specified
+    if !slots_to_gate.is_empty() {
         // Check for already gated slots first
-        for slot in &new_slots {
+        for slot in &slots_to_gate {
             if is_slot_gated_direct(&data, *slot, epoch_start_slot, bitmap_len) {
                 return err!(GatekeeperError::DuplicateSlots);
             }
         }
 
-        // Add new slots to bitmap
-        for slot in &new_slots {
+        // Gate new slots in bitmap
+        for slot in &slots_to_gate {
             set_slot_gated_direct(&mut data, *slot, epoch_start_slot, bitmap_len, true)?;
             slots_added += 1;
         }

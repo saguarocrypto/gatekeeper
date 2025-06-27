@@ -3,17 +3,12 @@ import { Program } from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { SaguaroGatekeeper } from "../target/types/saguaro_gatekeeper";
 
-/**
- * The PDA seed prefix for the SandwichValidators account.
- * This must match the value in the Rust program.
- */
-export const SANDWICH_VALIDATORS_SEED_PREFIX = "sandwich_validators";
 
 /**
  * The PDA seed prefix for the LargeBitmap account.
  * This must match the value in the Rust program.
  */
-export const LARGE_BITMAP_SEED_PREFIX = "large_bitmap";
+export const SANDWICH_VALIDATORS_SEED_PREFIX = "sandwich_validators";
 
 /**
  * Maximum number of slots allowed per transaction.
@@ -28,13 +23,14 @@ export const MAX_SLOTS_PER_TRANSACTION = 100;
 export const SLOTS_PER_EPOCH = 432_000;
 
 /**
- * Constants for large bitmap operations.
+ * Constants for sandwich validators bitmap operations.
  */
 export const FULL_BITMAP_SIZE_BYTES = 54_000; // 432,000 bits / 8 = 54,000 bytes
 export const INITIAL_ACCOUNT_SIZE = 10240; // Initial 10KB allocation
 export const MAX_REALLOC_SIZE = 10240; // Maximum bytes per realloc operation
-export const LARGE_BITMAP_ACCOUNT_BASE_SIZE = 16; // discriminator(8) + epoch(2) + bump(1) + padding(5)
-export const TARGET_ACCOUNT_SIZE = LARGE_BITMAP_ACCOUNT_BASE_SIZE + FULL_BITMAP_SIZE_BYTES; // 54,016 bytes total
+export const SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE = 16; // discriminator(8) + epoch(2) + bump(1) + padding(5)
+export const TARGET_ACCOUNT_SIZE = SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE + FULL_BITMAP_SIZE_BYTES; // 54,016 bytes total
+
 
 /**
  * Derives the Program Derived Address (PDA) for the SandwichValidators account.
@@ -60,48 +56,23 @@ export const getSandwichValidatorsPda = (
   return { pda, bump };
 };
 
-/**
- * Derives the Program Derived Address (PDA) for the LargeBitmap account.
- *
- * @param multisigAuthority The public key of the multisig authority.
- * @param epoch The epoch number (as a BN).
- * @param programId The program ID.
- * @returns An object containing the PDA public key (`pda`) and the bump seed (`bump`).
- */
-export const getLargeBitmapPda = (
-  multisigAuthority: PublicKey,
-  epoch: anchor.BN,
-  programId: PublicKey
-): { pda: PublicKey; bump: number } => {
-  const [pda, bump] = PublicKey.findProgramAddressSync(
-    [
-      Buffer.from(LARGE_BITMAP_SEED_PREFIX),
-      multisigAuthority.toBuffer(),
-      epoch.toBuffer("le", 2), // Epoch is u16, so 2 bytes little-endian
-    ],
-    programId
-  );
-  return { pda, bump };
-};
-
 // --- Instruction Wrapper Functions ---
 
 /**
  * Creates a MethodsBuilder to call the `setSandwichValidators` instruction.
+ * 
+ * **CRUD Operation: CREATE**
+ * This instruction only creates the account with initial 10KB size - no slots are set.
+ * Use `expandSandwichValidatorsBitmap` to expand to full size.
+ * Use `modifySandwichValidators` to gate/ungate slots.
  */
 export const setSandwichValidators = (
   program: Program<SaguaroGatekeeper>,
   args: {
     epoch: number;
-    slots: anchor.BN[];
     multisigAuthority: PublicKey;
   }
 ) => {
-  // Client-side validation to prevent encoding errors
-  if (args.slots.length > MAX_SLOTS_PER_TRANSACTION) {
-    throw new Error(`TooManySlots: Cannot set more than ${MAX_SLOTS_PER_TRANSACTION} slots per transaction. Got ${args.slots.length}.`);
-  }
-
   const { pda } = getSandwichValidatorsPda(
     args.multisigAuthority,
     new anchor.BN(args.epoch),
@@ -109,7 +80,7 @@ export const setSandwichValidators = (
   );
 
   return program.methods
-    .setSandwichValidators(args.epoch, args.slots)
+    .setSandwichValidators(args.epoch)
     .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
@@ -118,32 +89,34 @@ export const setSandwichValidators = (
 };
 
 /**
- * Creates a MethodsBuilder to call the `updateSandwichValidator` instruction.
- * This instruction supports both adding new slots and removing existing slots.
+ * Creates a MethodsBuilder to call the `modifySandwichValidators` instruction.
+ * 
+ * **CRUD Operation: UPDATE**
+ * This instruction supports both gating slots (set to true) and ungating slots (set to false).
  */
-export const updateSandwichValidator = (
+export const modifySandwichValidators = (
   program: Program<SaguaroGatekeeper>,
   args: {
     epoch: number;
-    newSlots?: anchor.BN[];
-    removeSlots?: anchor.BN[];
+    slotsToGate?: anchor.BN[];
+    slotsToUngate?: anchor.BN[];
     multisigAuthority: PublicKey;
   }
 ) => {
-  const newSlots = args.newSlots || [];
-  const removeSlots = args.removeSlots || [];
+  const slotsToGate = args.slotsToGate || [];
+  const slotsToUngate = args.slotsToUngate || [];
 
   // Client-side validation to prevent encoding errors
-  if (newSlots.length > MAX_SLOTS_PER_TRANSACTION) {
-    throw new Error(`TooManySlots: Cannot add more than ${MAX_SLOTS_PER_TRANSACTION} slots per transaction. Got ${newSlots.length}.`);
+  if (slotsToGate.length > MAX_SLOTS_PER_TRANSACTION) {
+    throw new Error(`TooManySlots: Cannot gate more than ${MAX_SLOTS_PER_TRANSACTION} slots per transaction. Got ${slotsToGate.length}.`);
   }
 
-  if (removeSlots.length > MAX_SLOTS_PER_TRANSACTION) {
-    throw new Error(`TooManySlots: Cannot remove more than ${MAX_SLOTS_PER_TRANSACTION} slots per transaction. Got ${removeSlots.length}.`);
+  if (slotsToUngate.length > MAX_SLOTS_PER_TRANSACTION) {
+    throw new Error(`TooManySlots: Cannot ungate more than ${MAX_SLOTS_PER_TRANSACTION} slots per transaction. Got ${slotsToUngate.length}.`);
   }
 
-  if (newSlots.length === 0 && removeSlots.length === 0) {
-    throw new Error(`No operation specified: Must provide either newSlots or removeSlots (or both).`);
+  if (slotsToGate.length === 0 && slotsToUngate.length === 0) {
+    throw new Error(`No operation specified: Must provide either slotsToGate or slotsToUngate (or both).`);
   }
 
   const { pda } = getSandwichValidatorsPda(
@@ -153,7 +126,7 @@ export const updateSandwichValidator = (
   );
 
   return program.methods
-    .updateSandwichValidator(args.epoch, newSlots, removeSlots)
+    .modifySandwichValidators(args.epoch, slotsToGate, slotsToUngate)
     .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
@@ -228,63 +201,42 @@ export const closeSandwichValidator = (
     });
 };
 
-// --- Large Bitmap Instruction Wrapper Functions ---
-
 /**
- * Creates a MethodsBuilder to call the `initializeLargeBitmap` instruction.
+ * Creates a MethodsBuilder to call the `expandSandwichValidatorsBitmap` instruction.
  */
-export const initializeLargeBitmap = (
+export const expandSandwichValidatorsBitmap = (
   program: Program<SaguaroGatekeeper>,
   args: {
     epoch: number;
     multisigAuthority: PublicKey;
   }
 ) => {
-  const { pda } = getLargeBitmapPda(
+  const { pda } = getSandwichValidatorsPda(
     args.multisigAuthority,
     new anchor.BN(args.epoch),
     program.programId
   );
 
   return program.methods
-    .initializeLargeBitmap(args.epoch)
+    .expandSandwichValidatorsBitmap()
     .accountsStrict({
-      largeBitmap: pda,
+      sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
       systemProgram: SystemProgram.programId,
     });
 };
 
-/**
- * Creates a MethodsBuilder to call the `expandBitmap` instruction.
- */
-export const expandBitmap = (
-  program: Program<SaguaroGatekeeper>,
-  args: {
-    epoch: number;
-    multisigAuthority: PublicKey;
-  }
-) => {
-  const { pda } = getLargeBitmapPda(
-    args.multisigAuthority,
-    new anchor.BN(args.epoch),
-    program.programId
-  );
-
-  return program.methods
-    .expandBitmap()
-    .accountsStrict({
-      largeBitmap: pda,
-      multisigAuthority: args.multisigAuthority,
-      systemProgram: SystemProgram.programId,
-    });
-};
+// --- Utility Instruction Wrapper Functions ---
 
 
 /**
- * Creates a MethodsBuilder to call the `appendData` instruction.
+ * Creates a MethodsBuilder to call the `appendDataSandwichValidatorsBitmap` instruction.
+ * 
+ * **Utility Operation**: Raw bitmap data writing
+ * This is a low-level utility for writing pre-computed bitmap data.
+ * Most users should use `modifySandwichValidators` instead.
  */
-export const appendData = (
+export const appendDataSandwichValidatorsBitmap = (
   program: Program<SaguaroGatekeeper>,
   args: {
     epoch: number;
@@ -292,7 +244,7 @@ export const appendData = (
     data: Buffer;
   }
 ) => {
-  const { pda } = getLargeBitmapPda(
+  const { pda } = getSandwichValidatorsPda(
     args.multisigAuthority,
     new anchor.BN(args.epoch),
     program.programId
@@ -302,40 +254,43 @@ export const appendData = (
   const dataArray = args.data;
   
   return program.methods
-    .appendData(dataArray)
+    .appendDataSandwichValidatorsBitmap(dataArray)
     .accountsStrict({
-      largeBitmap: pda,
+      sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
     });
 };
 
 /**
- * Creates a MethodsBuilder to call the `clearData` instruction.
+ * Creates a MethodsBuilder to call the `clearDataSandwichValidatorsBitmap` instruction.
+ * 
+ * **Utility Operation**: Clear all bitmap data (ungate all slots)
+ * This sets all slots in the bitmap to ungated (false).
  */
-export const clearData = (
+export const clearDataSandwichValidatorsBitmap = (
   program: Program<SaguaroGatekeeper>,
   args: {
     epoch: number;
     multisigAuthority: PublicKey;
   }
 ) => {
-  const { pda } = getLargeBitmapPda(
+  const { pda } = getSandwichValidatorsPda(
     args.multisigAuthority,
     new anchor.BN(args.epoch),
     program.programId
   );
 
   return program.methods
-    .clearData()
+    .clearDataSandwichValidatorsBitmap()
     .accountsStrict({
-      largeBitmap: pda,
+      sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
     });
 };
 
 /**
- * Prepares a complete transaction to initialize and populate a large bitmap.
- * This function handles the multi-step process: initialization and chained expansion.
+ * Prepares instructions to create and populate a sandwich validators account.
+ * Uses the streamlined approach: set_sandwich_validators + expand_bitmap + append_data.
  */
 export const prepareLargeBitmapTransaction = async (
   program: Program<SaguaroGatekeeper>,
@@ -345,14 +300,14 @@ export const prepareLargeBitmapTransaction = async (
     bitmapData: Buffer;
   }
 ) => {
-  const { pda } = getLargeBitmapPda(
+  const { pda } = getSandwichValidatorsPda(
     args.multisigAuthority,
     new anchor.BN(args.epoch),
     program.programId
   );
 
-  // Step 1: Initialize the account with 10KB
-  const initializeIx = await initializeLargeBitmap(program, {
+  // Step 1: Create the account using set_sandwich_validators (10KB initial size)
+  const createIx = await setSandwichValidators(program, {
     epoch: args.epoch,
     multisigAuthority: args.multisigAuthority,
   }).instruction();
@@ -363,7 +318,7 @@ export const prepareLargeBitmapTransaction = async (
   
   const expandInstructions = [];
   for (let i = 0; i < numExpansions; i++) {
-    const expandIx = await expandBitmap(program, {
+    const expandIx = await expandSandwichValidatorsBitmap(program, {
       epoch: args.epoch,
       multisigAuthority: args.multisigAuthority,
     }).instruction();
@@ -377,7 +332,7 @@ export const prepareLargeBitmapTransaction = async (
     
     for (let offset = 0; offset < args.bitmapData.length; offset += chunkSize) {
       const chunk = args.bitmapData.slice(offset, offset + chunkSize);
-      const writeIx = await appendData(program, {
+      const writeIx = await appendDataSandwichValidatorsBitmap(program, {
         epoch: args.epoch,
         multisigAuthority: args.multisigAuthority,
         data: chunk,
@@ -387,10 +342,10 @@ export const prepareLargeBitmapTransaction = async (
   }
 
   return {
-    initializeInstruction: initializeIx,
+    createInstruction: createIx,
     expandInstructions,
     writeInstructions,
-    largeBitmapPda: pda,
+    sandwichValidatorsPda: pda,
     totalExpansions: numExpansions,
     targetSize: TARGET_ACCOUNT_SIZE,
   };

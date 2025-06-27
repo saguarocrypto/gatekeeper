@@ -57,8 +57,8 @@ pub fn handler(ctx: Context<ValidateSandwichValidators>) -> Result<()> {
     let bit_index = slot_offset & 7;    // Bit mask instead of modulo
 
     // Direct byte access at calculated position
-    // Layout: discriminator(8) + epoch(2) + vec_len(4) + bitmap
-    const BITMAP_OFFSET: usize = 14;
+    // Layout: discriminator(8) + epoch(2) + bump(1) + padding(5) + bitmap
+    const BITMAP_OFFSET: usize = 16; // SandwichValidators::DATA_OFFSET
     let target_pos = BITMAP_OFFSET + byte_index;
 
     // Only check if we can read the byte (bounds safety)

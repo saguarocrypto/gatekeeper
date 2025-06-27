@@ -1,13 +1,17 @@
 use anchor_lang::prelude::*;
-use crate::AppendData;
+use crate::AppendDataSandwichValidatorsBitmap;
 
-/// Handler for appending data to a large bitmap account.
+/// Handler for appending data to a sandwich validators bitmap account.
+/// 
+/// **Utility Operation**: Raw bitmap data writing
+/// This is a low-level utility for writing pre-computed bitmap data.
+/// Most users should use `modify_sandwich_validators` instead.
 /// 
 /// # Compute Optimization
 /// - Minimizes logging overhead
 /// - Early return for empty data
 /// - Direct memory operations
-pub fn handler(ctx: Context<AppendData>, data: Vec<u8>) -> Result<()> {
+pub fn handler(ctx: Context<AppendDataSandwichValidatorsBitmap>, data: Vec<u8>) -> Result<()> {
     // Validate data size early to avoid unnecessary loads
     if data.is_empty() {
         return Ok(());
@@ -17,13 +21,13 @@ pub fn handler(ctx: Context<AppendData>, data: Vec<u8>) -> Result<()> {
         return err!(crate::GatekeeperError::SlotOutOfRange);
     }
     
-    let large_bitmap_account = &ctx.accounts.large_bitmap;
+    let sandwich_validators_account = &ctx.accounts.sandwich_validators;
     
     #[cfg(feature = "debug-logs")]
     msg!("Appending {} bytes of data to large bitmap", data.len());
     
     // Get account data for writing without loading first
-    let account_info = large_bitmap_account.to_account_info();
+    let account_info = sandwich_validators_account.to_account_info();
     let mut account_data = account_info.try_borrow_mut_data()?;
     
     // Skip the discriminator + epoch + bump + padding (16 bytes total)

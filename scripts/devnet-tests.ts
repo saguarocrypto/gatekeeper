@@ -154,8 +154,10 @@ async function main() {
     );
 
     const account = await program.account.sandwichValidators.fetch(pda);
+    const pdaInfo = await provider.connection.getAccountInfo(pda);
+    const bitmapSize = pdaInfo ? pdaInfo.data.length - 16 : 0; // Subtract header size
     assert(account.epoch === epochArg.toNumber(), "Epoch mismatch");
-    assert(account.slots.length === 9000, "Bitmap size mismatch");
+    assert(bitmapSize >= 54000, "Bitmap size should be at least 54KB for full epoch");
     
     return [sig];
   });
@@ -279,7 +281,9 @@ async function main() {
       program.programId
     );
     const account = await program.account.sandwichValidators.fetch(pda);
-    assert(account.slots.length === 9000, "Bitmap size mismatch after update");
+    const pdaInfo = await provider.connection.getAccountInfo(pda);
+    const bitmapSize = pdaInfo ? pdaInfo.data.length - 16 : 0; // Subtract header size
+    assert(bitmapSize >= 54000, "Bitmap size should be at least 54KB for full epoch after update");
     
     return [setSig, updateSig];
   });
@@ -371,7 +375,9 @@ async function main() {
       program.programId
     );
     const account = await program.account.sandwichValidators.fetch(pda);
-    assert(account.slots.length === 9000, "Bitmap size mismatch");
+    const pdaInfo = await provider.connection.getAccountInfo(pda);
+    const bitmapSize = pdaInfo ? pdaInfo.data.length - 16 : 0; // Subtract header size
+    assert(bitmapSize >= 54000, "Bitmap size should be at least 54KB for full epoch");
     
     return [setSig];
   });

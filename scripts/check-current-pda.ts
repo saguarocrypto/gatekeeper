@@ -45,27 +45,27 @@ async function main() {
     if (accountInfo) {
       console.log(`\nPDA exists with size: ${accountInfo.data.length} bytes`);
       
-      // Read the raw account data to see the bitmap length
+      // Read the raw account data using the new SandwichValidators structure
       const discriminator = accountInfo.data.readBigUInt64LE(0);
       const epoch = accountInfo.data.readUInt16LE(8);
-      const bitmapLen = accountInfo.data.readUInt32LE(10);
-      const bump = accountInfo.data[accountInfo.data.length - 1];
+      const bump = accountInfo.data.readUInt8(10);
+      const bitmapDataLength = accountInfo.data.length - 16; // 8 (discriminator) + 2 (epoch) + 1 (bump) + 5 (padding) = 16 bytes header
       
       console.log(`Raw data - Discriminator: ${discriminator.toString(16)}`);
       console.log(`Raw data - Epoch: ${epoch}`);
-      console.log(`Raw data - Bitmap length: ${bitmapLen} bytes`);
-      console.log(`Raw data - Max trackable slots: ${bitmapLen * 8}`);
       console.log(`Raw data - Bump: ${bump}`);
-      console.log(`Raw data - Header size: 15 bytes`);
-      console.log(`Raw data - Expected account size: ${15 + bitmapLen + 1} bytes`);
+      console.log(`Raw data - Bitmap data length: ${bitmapDataLength} bytes`);
+      console.log(`Raw data - Max trackable slots: ${bitmapDataLength * 8}`);
+      console.log(`Raw data - Header size: 16 bytes`);
       console.log(`Raw data - Actual account size: ${accountInfo.data.length} bytes`);
       
       // Try to fetch using program account decoder
       try {
         const account = await program.account.sandwichValidators.fetch(pda);
         console.log(`\nProgram decode - Epoch: ${account.epoch}`);
-        console.log(`Program decode - Bitmap length: ${account.slots.length} bytes`);
-        console.log(`Program decode - Max trackable slots: ${account.slots.length * 8}`);
+        console.log(`\nProgram decode - Bump: ${account.bump}`);
+        console.log(`Program decode - Bitmap data available: ${bitmapDataLength} bytes`);
+        console.log(`Program decode - Max trackable slots: ${bitmapDataLength * 8}`);
       } catch (error) {
         console.log(`\nProgram decode failed: ${error}`);
       }

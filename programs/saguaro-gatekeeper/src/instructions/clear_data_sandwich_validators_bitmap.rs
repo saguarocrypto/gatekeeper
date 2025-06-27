@@ -1,16 +1,19 @@
 use anchor_lang::prelude::*;
-use crate::ClearData;
+use crate::ClearDataSandwichValidatorsBitmap;
 
-/// Handler for clearing all data in a large bitmap account.
+/// Handler for clearing all data in a sandwich validators bitmap account.
+/// 
+/// **Utility Operation**: Clear all bitmap data (ungate all slots)
+/// This sets all slots in the bitmap to ungated (false).
 /// 
 /// # Compute Optimization
 /// - Minimizes logging overhead
 /// - Uses efficient memory clearing operations
-pub fn handler(ctx: Context<ClearData>) -> Result<()> {
-    let large_bitmap_account = &ctx.accounts.large_bitmap;
+pub fn handler(ctx: Context<ClearDataSandwichValidatorsBitmap>) -> Result<()> {
+    let sandwich_validators_account = &ctx.accounts.sandwich_validators;
     
     // Get account data for writing without loading first
-    let account_info = large_bitmap_account.to_account_info();
+    let account_info = sandwich_validators_account.to_account_info();
     let mut account_data = account_info.try_borrow_mut_data()?;
     
     #[cfg(feature = "debug-logs")]

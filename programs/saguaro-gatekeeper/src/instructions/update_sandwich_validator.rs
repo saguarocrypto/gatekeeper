@@ -1,173 +1,200 @@
 use anchor_lang::prelude::*;
-use crate::{UpdateSandwichValidator, SandwichValidatorsUpdated, MAX_SLOTS_PER_TRANSACTION, MAX_SLOTS_PER_EPOCH, GatekeeperError, instructions::pause_utils};
+use crate::{UpdateSandwichValidator, SandwichValidatorsUpdated, MAX_SLOTS_PER_TRANSACTION, GatekeeperError, SLOTS_PER_EPOCH, INITIAL_BITMAP_SIZE_BYTES, FULL_BITMAP_SIZE_BYTES};
 
 /// Handler for the `update_sandwich_validator` instruction.
-/// This instruction supports both adding new slots and removing existing slots.
-/// This instruction is subject to the pause mechanism.
+/// This instruction supports both adding new slots and removing existing slots using bitmap operations.
+/// 
+/// # Compute Optimization
+/// This handler uses lazy loading and direct memory operations to minimize compute usage:
+/// - Avoids full deserialization of the bitmap account
+/// - Uses stack-based duplicate checking for small arrays
+/// - Performs direct bit manipulation on borrowed account data
 pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots: Vec<u64>, remove_slots: Vec<u64>) -> Result<()> {
-    // Check if the program is paused before proceeding
-    pause_utils::check_not_paused(&ctx.accounts.pause_state)?;
-
-    msg!("Updating sandwich validator slots for epoch: {}", epoch_arg);
-    msg!("Number of slots to add: {}", new_slots.len());
-    msg!("Number of slots to remove: {}", remove_slots.len());
-
     // Validate that neither operation exceeds per-transaction limits
     if new_slots.len() > MAX_SLOTS_PER_TRANSACTION {
-        msg!("Error: Cannot add more than {} slots per transaction", MAX_SLOTS_PER_TRANSACTION);
         return err!(GatekeeperError::TooManySlots);
     }
 
     if remove_slots.len() > MAX_SLOTS_PER_TRANSACTION {
-        msg!("Error: Cannot remove more than {} slots per transaction", MAX_SLOTS_PER_TRANSACTION);
         return err!(GatekeeperError::TooManySlots);
     }
 
     // Check if both arrays are empty
     if new_slots.is_empty() && remove_slots.is_empty() {
-        msg!("Warning: No slots to add or remove for epoch {}", epoch_arg);
         return Ok(());
     }
 
-    let sandwich_validators = &mut ctx.accounts.sandwich_validators;
+    let sandwich_validators_ai = &ctx.accounts.sandwich_validators;
     let multisig_authority = &ctx.accounts.multisig_authority;
 
-    // Get current slots
-    let mut current_slots = sandwich_validators.slots.clone();
+    // Validate account exists and is owned by our program
+    if sandwich_validators_ai.data_is_empty() || *sandwich_validators_ai.owner != *ctx.program_id {
+        return err!(GatekeeperError::InvalidPda);
+    }
+
+    // Calculate epoch start slot
+    let epoch_start_slot = (epoch_arg as u64) * SLOTS_PER_EPOCH as u64;
+
+    // Lazy loading - only read the epoch for validation
+    let data_borrow = sandwich_validators_ai.try_borrow_data()?;
     
-    // Step 1: Remove slots if specified
-    if !remove_slots.is_empty() {
-        // Check for duplicates in remove_slots array
-        let mut unique_remove_slots = std::collections::HashSet::new();
-        for slot in &remove_slots {
-            if !unique_remove_slots.insert(*slot) {
-                msg!("Error: Duplicate slot {} found in remove_slots array", slot);
-                return err!(GatekeeperError::DuplicateSlots);
-            }
+    // Account structure: discriminator(8) + epoch(2) + slots.len(4) + slots_data + bump(1)
+    const DISCRIMINATOR_SIZE: usize = 8;
+    const EPOCH_SIZE: usize = 2;
+    const VEC_LEN_SIZE: usize = 4;
+    const HEADER_SIZE: usize = DISCRIMINATOR_SIZE + EPOCH_SIZE + VEC_LEN_SIZE;
+    
+    // Validate epoch matches
+    let stored_epoch = u16::from_le_bytes([data_borrow[DISCRIMINATOR_SIZE], data_borrow[DISCRIMINATOR_SIZE + 1]]);
+    if stored_epoch != epoch_arg {
+        return err!(GatekeeperError::EpochMismatch);
+    }
+    
+    // Read bitmap length
+    let bitmap_len = u32::from_le_bytes([
+        data_borrow[DISCRIMINATOR_SIZE + EPOCH_SIZE],
+        data_borrow[DISCRIMINATOR_SIZE + EPOCH_SIZE + 1],
+        data_borrow[DISCRIMINATOR_SIZE + EPOCH_SIZE + 2],
+        data_borrow[DISCRIMINATOR_SIZE + EPOCH_SIZE + 3],
+    ]) as usize;
+    
+    // Validate bitmap size - allow both initial and expanded sizes
+    if bitmap_len < INITIAL_BITMAP_SIZE_BYTES || bitmap_len > FULL_BITMAP_SIZE_BYTES {
+        return err!(GatekeeperError::InvalidPda);
+    }
+    
+    drop(data_borrow);
+
+    // Calculate max trackable slots based on current bitmap size with overflow protection
+    let max_trackable_slots = bitmap_len.checked_mul(8).ok_or(GatekeeperError::SlotOutOfRange)?;
+    let max_trackable_slot = epoch_start_slot.checked_add(max_trackable_slots as u64).ok_or(GatekeeperError::SlotOutOfRange)?;
+
+    // Optimized duplicate checking function - uses BTreeSet for simplicity and efficiency
+    fn check_duplicates_and_validate(slots: &[u64], epoch_start: u64, max_trackable_slot: u64) -> Result<()> {
+        if slots.is_empty() {
+            return Ok(());
         }
 
-        // Remove specified slots from current_slots
-        let initial_length = current_slots.len();
-        current_slots.retain(|slot| !unique_remove_slots.contains(slot));
-        let removed_count = initial_length - current_slots.len();
+        let mut unique_slots = std::collections::BTreeSet::new();
+        for &slot in slots {
+            if !unique_slots.insert(slot) {
+                return err!(GatekeeperError::DuplicateSlots);
+            }
+            if slot < epoch_start || slot >= max_trackable_slot {
+                return err!(GatekeeperError::SlotOutOfRange);
+            }
+        }
+        Ok(())
+    }
+
+    // Validate both arrays against current bitmap capacity
+    check_duplicates_and_validate(&remove_slots, epoch_start_slot, max_trackable_slot)?;
+    check_duplicates_and_validate(&new_slots, epoch_start_slot, max_trackable_slot)?;
+
+    // Direct bit manipulation functions that work with current bitmap size
+    #[inline(always)]
+    fn is_slot_gated_direct(data: &[u8], slot: u64, epoch_start: u64, bitmap_len: usize) -> bool {
+        let slot_offset = (slot - epoch_start) as usize;
+        let max_trackable_slots = match bitmap_len.checked_mul(8) {
+            Some(slots) => slots,
+            None => return false, // Overflow, treat as not gated
+        };
         
-        msg!("Removed {} slots (requested: {})", removed_count, remove_slots.len());
+        if slot_offset >= max_trackable_slots {
+            return false;
+        }
         
-        if removed_count != remove_slots.len() {
-            msg!("Warning: Some slots to remove were not found in the current slot list");
+        let byte_index = slot_offset / 8;
+        let bit_index = slot_offset % 8;
+        let byte_pos = match HEADER_SIZE.checked_add(byte_index) {
+            Some(pos) => pos,
+            None => return false, // Overflow, treat as not gated
+        };
+        
+        if byte_pos >= data.len() {
+            return false;
+        }
+        
+        (data[byte_pos] >> bit_index) & 1 == 1
+    }
+    
+    #[inline(always)]
+    fn set_slot_gated_direct(data: &mut [u8], slot: u64, epoch_start: u64, bitmap_len: usize, gated: bool) -> Result<()> {
+        let slot_offset = (slot - epoch_start) as usize;
+        let max_trackable_slots = bitmap_len.checked_mul(8).ok_or(GatekeeperError::SlotOutOfRange)?;
+        
+        if slot_offset >= max_trackable_slots {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
+        
+        let byte_index = slot_offset / 8;
+        let bit_index = slot_offset % 8;
+        let byte_pos = HEADER_SIZE.checked_add(byte_index).ok_or(GatekeeperError::SlotOutOfRange)?;
+        
+        if byte_pos >= data.len() {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
+        
+        if gated {
+            data[byte_pos] |= 1 << bit_index;
+        } else {
+            data[byte_pos] &= !(1 << bit_index);
+        }
+        
+        Ok(())
+    }
+
+    let mut slots_added = 0u16;
+    let mut slots_removed = 0u16;
+
+    // Get mutable access to account data for direct bit manipulation
+    let mut data = sandwich_validators_ai.try_borrow_mut_data()?;
+
+    // Step 1: Remove slots if specified
+    if !remove_slots.is_empty() {
+        for slot in &remove_slots {
+            if is_slot_gated_direct(&data, *slot, epoch_start_slot, bitmap_len) {
+                set_slot_gated_direct(&mut data, *slot, epoch_start_slot, bitmap_len, false)?;
+                slots_removed += 1;
+            }
         }
     }
 
     // Step 2: Add new slots if specified
     if !new_slots.is_empty() {
-        // Calculate valid slot range for this epoch
-        let epoch_start_slot = (epoch_arg as u64) * 432_000;
-        let epoch_end_slot = ((epoch_arg as u64) + 1) * 432_000;
-
-        // Check for duplicates in new_slots array and validate ranges
-        let mut unique_new_slots = std::collections::HashSet::new();
+        // Check for already gated slots first
         for slot in &new_slots {
-            if !unique_new_slots.insert(*slot) {
-                msg!("Error: Duplicate slot {} found in new_slots array", slot);
-                return err!(GatekeeperError::DuplicateSlots);
-            }
-
-            // Validate slot is within the epoch boundaries
-            if *slot < epoch_start_slot || *slot >= epoch_end_slot {
-                msg!(
-                    "Error: Slot {} is outside epoch {} boundaries [{}, {})",
-                    slot, epoch_arg, epoch_start_slot, epoch_end_slot
-                );
-                return err!(GatekeeperError::SlotOutOfRange);
-            }
-        }
-
-        // Check if any new slots already exist in current slots
-        let current_slots_set: std::collections::HashSet<u64> = current_slots.iter().cloned().collect();
-        for slot in &new_slots {
-            if current_slots_set.contains(slot) {
-                msg!("Error: Slot {} already exists in epoch {}", slot, epoch_arg);
+            if is_slot_gated_direct(&data, *slot, epoch_start_slot, bitmap_len) {
                 return err!(GatekeeperError::DuplicateSlots);
             }
         }
 
-        // Check if adding new slots would exceed total limit
-        let new_total_length = current_slots.len()
-            .checked_add(new_slots.len())
-            .ok_or(GatekeeperError::TooManySlots)?;
-        
-        if new_total_length > MAX_SLOTS_PER_EPOCH {
-            msg!(
-                "Error: Adding {} slots to existing {} slots would exceed maximum of {} slots per epoch",
-                new_slots.len(),
-                current_slots.len(),
-                MAX_SLOTS_PER_EPOCH
-            );
-            return err!(GatekeeperError::TooManySlots);
+        // Add new slots to bitmap
+        for slot in &new_slots {
+            set_slot_gated_direct(&mut data, *slot, epoch_start_slot, bitmap_len, true)?;
+            slots_added += 1;
         }
-
-        // Add the new slots
-        current_slots.extend(new_slots.clone());
-        msg!("Added {} new slots", new_slots.len());
     }
 
-    // Sort the slots for efficient binary search during validation
-    current_slots.sort_unstable();
+    drop(data);
 
-    // Calculate the new required size with overflow protection
-    let slot_data_size = current_slots.len()
-        .checked_mul(8)
-        .ok_or(GatekeeperError::TooManySlots)?;
-    let new_size = crate::SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE
-        .checked_add(slot_data_size)
-        .ok_or(GatekeeperError::TooManySlots)?;
-
-    // Calculate rent for the new size
-    let minimum_balance = Rent::get()?.minimum_balance(new_size);
-    let current_lamports = sandwich_validators.to_account_info().lamports();
-
-    // If more rent is needed, transfer it from the multisig authority
-    if minimum_balance > current_lamports {
-        let rent_diff = minimum_balance.saturating_sub(current_lamports);
-        
-        anchor_lang::system_program::transfer(
-            CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
-                anchor_lang::system_program::Transfer {
-                    from: multisig_authority.to_account_info(),
-                    to: sandwich_validators.to_account_info(),
-                },
-            ),
-            rent_diff,
-        )?;
-    }
-
-    // Resize the account if necessary
-    sandwich_validators.to_account_info().resize(new_size)?;
-
-    // Verify account is still rent-exempt after resize
-    let final_lamports = sandwich_validators.to_account_info().lamports();
-    let final_rent = Rent::get()?.minimum_balance(new_size);
-    if final_lamports < final_rent {
-        return err!(GatekeeperError::RentNotMet);
-    }
-
-    // Update the slots array
-    sandwich_validators.slots = current_slots;
-    
-    msg!(
-        "Successfully updated slots for epoch {}. Total slots: {}",
-        epoch_arg,
-        sandwich_validators.slots.len()
-    );
+    // For monitoring purposes, emit the net change as an approximation
+    // Note: The total_slots field is misleadingly named - it represents 
+    // an approximation for monitoring, not the actual total gated slots.
+    // Computing the actual total would require an expensive bitmap scan.
+    let net_change_approximation = if slots_added >= slots_removed {
+        slots_added - slots_removed
+    } else {
+        0 // Net decrease, show as 0 since we can't represent negative values
+    };
     
     // Emit event for monitoring
     emit!(SandwichValidatorsUpdated {
         authority: *multisig_authority.key,
         epoch: epoch_arg,
-        slots_added: new_slots.len() as u16,
-        slots_removed: remove_slots.len() as u16,
-        total_slots: sandwich_validators.slots.len() as u16,
+        slots_added,
+        slots_removed,
+        total_slots: net_change_approximation, // WARNING: Not actual total, just net change for this operation
     });
     
     Ok(())

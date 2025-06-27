@@ -1,19 +1,37 @@
+#![allow(unexpected_cfgs)]
+#![allow(deprecated)]
+
 use anchor_lang::prelude::*;
 
 pub mod constants;
 pub mod instructions;
+pub mod benchmarks;
 
-pub const MAX_SLOTS_PER_TRANSACTION: usize = 100;
-pub const MAX_SLOTS_PER_EPOCH: usize = 10000;
-// Calculate space: 8 (disc) + 2 (epoch) + 1 (bump) + 4 (vec len)
-// The actual size includes slot data (slots.len() * 8).
-pub const SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE: usize = 8 + 2 + 1 + 4;
+// Re-export all constants for backward compatibility
+pub use constants::*;
 
-// Pause state account size: 8 (discriminator) + 32 (authority) + 1 (is_paused) + 1 (bump)
-// This account stores the global pause state for emergency situations.
-pub const PAUSE_STATE_ACCOUNT_SIZE: usize = 8 + 32 + 1 + 1;
+/// Helper functions for compute optimization
+pub mod compute_optimization {
+    use crate::constants::SLOTS_PER_EPOCH;
+    
+    /// Inline helper to calculate slot offset within an epoch
+    #[inline(always)]
+    pub fn calculate_slot_offset(slot: u64, epoch: u16) -> usize {
+        let epoch_start = (epoch as u64) * SLOTS_PER_EPOCH as u64;
+        (slot - epoch_start) as usize
+    }
+    
+    /// Inline helper to calculate byte and bit position for a slot
+    #[inline(always)]
+    pub fn calculate_bit_position(slot_offset: usize) -> (usize, u8) {
+        let byte_index = slot_offset / 8;
+        let bit_index = (slot_offset % 8) as u8;
+        (byte_index, bit_index)
+    }
+}
 
-declare_id!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
+
+declare_id!("4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv");
 
 #[program]
 pub mod saguaro_gatekeeper {
@@ -26,7 +44,6 @@ pub mod saguaro_gatekeeper {
     /// - Requires multisig authority as signer
     /// - Enforces maximum slot limits to prevent DoS attacks
     /// - Manages rent-exemption through proper lamport transfers
-    /// - Subject to pause mechanism for emergency situations
     pub fn set_sandwich_validators(
         ctx: Context<SetSandwichValidators>,
         epoch_arg: u16,
@@ -41,7 +58,6 @@ pub mod saguaro_gatekeeper {
     /// # Security Notes:
     /// - Requires multisig authority as signer
     /// - Validates PDA existence and authority match
-    /// - Subject to pause mechanism for emergency situations
     /// - Validates slot limits and prevents duplicates
     pub fn update_sandwich_validator(
         ctx: Context<UpdateSandwichValidator>,
@@ -59,8 +75,7 @@ pub mod saguaro_gatekeeper {
     /// # CPI Safety:
     /// - Returns Ok if PDA doesn't exist (allows normal operation)
     /// - Returns SlotIsGated error only if slot is explicitly gated
-    /// - NOT subject to pause mechanism to maintain CPI compatibility
-    /// - Always performs validation regardless of system pause state
+    /// - Always performs validation for CPI compatibility
     /// - Derives current epoch and slot from Clock sysvar internally
     pub fn validate_sandwich_validators(
         ctx: Context<ValidateSandwichValidators>,
@@ -73,7 +88,6 @@ pub mod saguaro_gatekeeper {
     /// # Security Notes:
     /// - Only allows closing PDAs for past epochs
     /// - Requires multisig authority as signer
-    /// - Subject to pause mechanism for emergency situations
     pub fn close_sandwich_validator(
         ctx: Context<CloseSandwichValidator>,
         epoch_to_close: u16,
@@ -81,96 +95,326 @@ pub mod saguaro_gatekeeper {
         instructions::close_sandwich_validator_handler(ctx, epoch_to_close)
     }
 
-    /// Initialize the pause state for the program.
-    /// This creates a global pause state PDA that can be used to pause administrative operations.
+    /// Expand a SandwichValidators PDA to full bitmap capacity.
+    /// This allows the PDA to track all slots in an epoch (432,000 slots).
     /// 
     /// # Security Notes:
-    /// - Can only be called once to initialize the pause state
     /// - Requires multisig authority as signer
-    /// - Does not affect the validate instruction to maintain CPI compatibility
-    pub fn initialize_pause_state(
-        ctx: Context<InitializePauseState>,
+    /// - Uses realloc to expand account incrementally (10KB per call)
+    /// - Maintains rent exemption through additional lamport transfers
+    pub fn expand_sandwich_validators(
+        ctx: Context<ExpandSandwichValidators>,
+        epoch_arg: u16,
     ) -> Result<()> {
-        instructions::initialize_pause_state_handler(ctx)
+        instructions::expand_sandwich_validators_handler(ctx, epoch_arg)
     }
 
-    /// Pause or unpause administrative operations of the program.
-    /// When paused, set, update, and close operations will fail gracefully.
-    /// 
-    /// # Security Notes:
-    /// - Only multisig authority can pause/unpause
-    /// - Validate instruction remains unaffected for CPI safety
-    /// - Fails gracefully with ProgramPaused error for CPI callers
-    pub fn set_pause_state(
-        ctx: Context<SetPauseState>,
-        is_paused: bool,
+    /// Initialize a large bitmap account with 10KB initial allocation.
+    /// This is the first step in the two-step allocation process.
+    pub fn initialize_large_bitmap(
+        ctx: Context<InitializeLargeBitmap>,
+        epoch_arg: u16,
     ) -> Result<()> {
-        instructions::set_pause_state_handler(ctx, is_paused)
+        instructions::initialize_large_bitmap_handler(ctx, epoch_arg)
     }
 
-    /// Close the pause state PDA and refund rent to the multisig authority.
-    /// 
-    /// # Security Notes:
-    /// - Requires multisig authority as signer and must match stored authority
-    /// - Permanently removes pause functionality until re-initialized
-    /// - Returns all lamports to the authority account
-    pub fn close_pause_state(
-        ctx: Context<ClosePauseState>,
+    /// Expand the bitmap account to full size without writing data.
+    /// This is used to expand the account beyond the initial 10KB limit.
+    pub fn expand_bitmap(
+        ctx: Context<ExpandAndWriteBitmap>,
     ) -> Result<()> {
-        instructions::close_pause_state_handler(ctx)
+        instructions::expand_bitmap_handler(ctx)
     }
+
+    /// Expand the bitmap account to full size and optionally write data.
+    /// This uses realloc() to expand beyond the initial 10KB limit.
+    pub fn expand_and_write_bitmap(
+        ctx: Context<ExpandAndWriteBitmap>,
+        data_chunk: Vec<u8>,
+        chunk_offset: u64,
+    ) -> Result<()> {
+        instructions::expand_and_write_bitmap_handler(ctx, data_chunk, chunk_offset)
+    }
+
+    /// Append data to the large bitmap account.
+    pub fn append_data(
+        ctx: Context<AppendData>,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        instructions::append_data_handler(ctx, data)
+    }
+
+    /// Clear all data in the large bitmap account.
+    pub fn clear_data(
+        ctx: Context<ClearData>,
+    ) -> Result<()> {
+        instructions::clear_data_handler(ctx)
+    }
+
 }
 
-/// Account storing the validator slot assignments for a specific epoch.
+/// Account storing the validator slot assignments for a specific epoch using a bitmap.
 /// PDA derived from `SEED_PREFIX`, `multisig_authority` key, and `epoch`.
 /// The multisig_authority is not stored as it can be derived from the PDA seeds.
 #[account]
 #[derive(Debug)]
 pub struct SandwichValidators {
     /// The epoch number (u16) to which these slot assignments apply.
-    pub epoch: u16,                 // Epoch this PDA is for
-    /// A vector of u64 slot numbers that are considered "gated" or assigned for this epoch.
-    pub slots: Vec<u64>,            // Slots for this epoch
+    pub epoch: u16,
+    /// A bitmap where each bit represents whether a slot within the epoch is gated.
+    /// Due to Solana's 10KB account size limit, this bitmap covers the first portion
+    /// of slots in each epoch. Bit N represents slot (epoch * 432,000 + N).
+    /// Defaults to all false (all slots ungated).
+    pub slots: Vec<u8>,
     /// The canonical bump seed used for PDA derivation.
     pub bump: u8,
+}
+
+impl SandwichValidators {
+    /// Checks if a specific slot is gated within this epoch
+    pub fn is_slot_gated(&self, slot: u64) -> bool {
+        let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
+        let epoch_end = epoch_start + SLOTS_PER_EPOCH as u64;
+        
+        // Check if slot is within this epoch's range
+        if slot < epoch_start || slot >= epoch_end {
+            return false;
+        }
+        
+        let slot_offset = (slot - epoch_start) as usize;
+        
+        // Check if slot is within the epoch range
+        if slot_offset >= SLOTS_PER_EPOCH {
+            return false;
+        }
+        
+        let byte_index = slot_offset / 8;
+        let bit_index = slot_offset % 8;
+        
+        // If the bitmap hasn't been expanded to cover this slot, assume not gated
+        if byte_index >= self.slots.len() {
+            return false;
+        }
+        
+        (self.slots[byte_index] >> bit_index) & 1 == 1
+    }
+    
+    /// Sets a slot as gated within this epoch
+    /// Now supports the full epoch range when bitmap is expanded
+    pub fn set_slot_gated(&mut self, slot: u64, gated: bool) -> Result<()> {
+        let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
+        let epoch_end = epoch_start + SLOTS_PER_EPOCH as u64;
+        
+        // Check if slot is within this epoch's range
+        if slot < epoch_start || slot >= epoch_end {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
+        
+        let slot_offset = (slot - epoch_start) as usize;
+        
+        // Check if slot is within the full epoch range
+        if slot_offset >= SLOTS_PER_EPOCH {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
+        
+        let byte_index = slot_offset / 8;
+        let bit_index = slot_offset % 8;
+        
+        // Ensure bitmap is large enough to contain this slot
+        let required_size = byte_index + 1;
+        if self.slots.len() < required_size {
+            // Only expand up to the full bitmap size
+            let expand_to = required_size.min(FULL_BITMAP_SIZE_BYTES);
+            self.slots.resize(expand_to, 0);
+        }
+        
+        // Check if we have enough space after expansion
+        if byte_index >= self.slots.len() {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
+        
+        if gated {
+            self.slots[byte_index] |= 1 << bit_index;
+        } else {
+            self.slots[byte_index] &= !(1 << bit_index);
+        }
+        
+        Ok(())
+    }
 }
 
 impl SandwichValidators {
     pub const SEED_PREFIX: &'static [u8] = constants::SEED_PREFIX;
 }
 
+/// Large bitmap account that can store 432,000 slots using zero-copy patterns.
+/// Data is accessed manually to avoid heap allocation issues.
+#[account(zero_copy)]
+#[repr(C)]
+pub struct LargeBitmap {
+    /// The epoch number (u16) to which these slot assignments apply.
+    pub epoch: u16,
+    /// The canonical bump seed used for PDA derivation.
+    pub bump: u8,
+    /// Padding for alignment
+    pub _padding: [u8; 5],
+}
+
+impl LargeBitmap {
+    pub const SEED_PREFIX: &'static [u8] = b"large_bitmap";
+    pub const DATA_OFFSET: usize = 16; // discriminator (8) + epoch (2) + bump (1) + padding (5)
+
+    /// Gets a reference to the bitmap data within the account
+    pub fn bitmap_data<'a>(&self, account_data: &'a [u8]) -> &'a [u8] {
+        &account_data[Self::DATA_OFFSET..]
+    }
+
+    /// Gets a mutable reference to the bitmap data within the account
+    pub fn bitmap_data_mut<'a>(&self, account_data: &'a mut [u8]) -> &'a mut [u8] {
+        &mut account_data[Self::DATA_OFFSET..]
+    }
+
+    /// Checks if a specific slot is gated within this epoch
+    pub fn is_slot_gated(&self, slot: u64, account_data: &[u8]) -> bool {
+        let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
+        let epoch_end = epoch_start + SLOTS_PER_EPOCH as u64;
+        
+        // Check if slot is within this epoch's range
+        if slot < epoch_start || slot >= epoch_end {
+            return false;
+        }
+        
+        let slot_offset = (slot - epoch_start) as usize;
+        
+        // Check if slot is within the epoch range
+        if slot_offset >= SLOTS_PER_EPOCH {
+            return false;
+        }
+        
+        let byte_index = slot_offset / 8;
+        let bit_index = slot_offset % 8;
+        
+        let bitmap = self.bitmap_data(account_data);
+        if byte_index >= bitmap.len() {
+            return false;
+        }
+        
+        (bitmap[byte_index] >> bit_index) & 1 == 1
+    }
+    
+    /// Sets a slot as gated within this epoch
+    pub fn set_slot_gated(&self, slot: u64, gated: bool, account_data: &mut [u8]) -> Result<()> {
+        let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
+        let epoch_end = epoch_start + SLOTS_PER_EPOCH as u64;
+        
+        // Check if slot is within this epoch's range
+        if slot < epoch_start || slot >= epoch_end {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
+        
+        let slot_offset = (slot - epoch_start) as usize;
+        
+        // Check if slot is within our bitmap capacity
+        if slot_offset >= SLOTS_PER_EPOCH {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
+        
+        let byte_index = slot_offset / 8;
+        let bit_index = slot_offset % 8;
+        
+        let bitmap = self.bitmap_data_mut(account_data);
+        if byte_index >= bitmap.len() {
+            return err!(GatekeeperError::SlotOutOfRange);
+        }
+        
+        if gated {
+            bitmap[byte_index] |= 1 << bit_index;
+        } else {
+            bitmap[byte_index] &= !(1 << bit_index);
+        }
+        
+        Ok(())
+    }
+
+    /// Sets multiple slots as gated with batch optimization
+    /// Groups slots by byte to minimize memory access
+    pub fn set_slots_gated(&self, slots: &[u64], gated: bool, account_data: &mut [u8]) -> Result<()> {
+        let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
+        let bitmap = self.bitmap_data_mut(account_data);
+        
+        // Group slots by byte index for batch operations
+        let mut byte_operations: std::collections::BTreeMap<usize, Vec<u8>> = std::collections::BTreeMap::new();
+        
+        for &slot in slots {
+            if slot < epoch_start || slot >= epoch_start + SLOTS_PER_EPOCH as u64 {
+                return err!(GatekeeperError::SlotOutOfRange);
+            }
+            
+            let slot_offset = (slot - epoch_start) as usize;
+            let byte_index = slot_offset / 8;
+            let bit_index = (slot_offset % 8) as u8;
+            
+            if byte_index >= bitmap.len() {
+                return err!(GatekeeperError::SlotOutOfRange);
+            }
+            
+            byte_operations.entry(byte_index).or_insert_with(Vec::new).push(bit_index);
+        }
+        
+        // Apply batch operations per byte
+        for (byte_index, bit_indices) in byte_operations {
+            let byte = &mut bitmap[byte_index];
+            for bit_index in bit_indices {
+                if gated {
+                    *byte |= 1 << bit_index;
+                } else {
+                    *byte &= !(1 << bit_index);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Clears all slots (sets all to ungated)
+    /// Uses safe operations with performance optimization for large bitmaps
+    pub fn clear_all_slots(&self, account_data: &mut [u8]) {
+        let bitmap = self.bitmap_data_mut(account_data);
+        
+        // Use safe fill operation for all cases - modern Rust optimizes this well
+        // The compiler will vectorize this operation for large arrays
+        bitmap.fill(0);
+    }
+}
+
 /// Accounts for the `set_sandwich_validators` instruction.
 #[derive(Accounts)]
 #[instruction(epoch_arg: u16, slots_arg: Vec<u64>)]
 pub struct SetSandwichValidators<'info> {
+    /// CHECK: This account is manually validated and initialized in the instruction handler
     #[account(
-        init_if_needed,
-        payer = multisig_authority,
-        space = SANDWICH_VALIDATORS_ACCOUNT_BASE_SIZE + (slots_arg.len() * 8),
+        mut,
         seeds = [b"sandwich_validators", multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
         bump
     )]
-    pub sandwich_validators: Account<'info, SandwichValidators>,
+    pub sandwich_validators: AccountInfo<'info>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
-    /// CHECK: This account is validated in the pause_utils::check_not_paused function
-    #[account(
-        seeds = [b"pause_state"],
-        bump
-    )]
-    pub pause_state: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
 /// Accounts for the `validate_sandwich_validators` instruction.
-/// Derives current epoch/slot from Clock sysvar and validates PDA manually.
 #[derive(Accounts)]
 pub struct ValidateSandwichValidators<'info> {
+    /// The PDA account to be validated.
+    /// CHECK: The address is manually validated in the instruction handler against the
+    /// multisig_authority and current epoch from the clock sysvar.
+    pub sandwich_validators: AccountInfo<'info>,
     /// The multisig authority account used in PDA derivation.
     /// Not a signer as validation is public.
-    /// CHECK: This is used for PDA derivation only
+    /// CHECK: This is used for PDA derivation only and is not a signer.
     pub multisig_authority: AccountInfo<'info>,
-    /// The Clock sysvar to get current epoch and slot
+    /// The Clock sysvar to get current epoch and slot.
     pub clock: Sysvar<'info, Clock>,
 }
 
@@ -178,25 +422,35 @@ pub struct ValidateSandwichValidators<'info> {
 #[derive(Accounts)]
 #[instruction(epoch_arg: u16, new_slots: Vec<u64>, remove_slots: Vec<u64>)]
 pub struct UpdateSandwichValidator<'info> {
+    /// CHECK: This account is manually validated in the instruction handler
     #[account(
         mut,
         seeds = [b"sandwich_validators", multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
-        bump,
-        constraint = sandwich_validators.epoch == epoch_arg @ GatekeeperError::EpochMismatch
+        bump
     )]
-    pub sandwich_validators: Account<'info, SandwichValidators>,
+    pub sandwich_validators: AccountInfo<'info>,
 
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
-    /// CHECK: This account is validated in the pause_utils::check_not_paused function
-    #[account(
-        seeds = [b"pause_state"],
-        bump
-    )]
-    pub pause_state: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
+
+/// Accounts for the `expand_sandwich_validators` instruction.
+#[derive(Accounts)]
+#[instruction(epoch_arg: u16)]
+pub struct ExpandSandwichValidators<'info> {
+    /// CHECK: This account is manually validated in the instruction handler
+    #[account(
+        mut,
+        seeds = [b"sandwich_validators", multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
+        bump
+    )]
+    pub sandwich_validators: AccountInfo<'info>,
+    #[account(mut)]
+    pub multisig_authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
 
 /// Accounts for the `close_sandwich_validator` instruction.
 #[derive(Accounts)]
@@ -211,72 +465,54 @@ pub struct CloseSandwichValidator<'info> {
     pub sandwich_validators: Account<'info, SandwichValidators>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
-    /// CHECK: This account is validated in the pause_utils::check_not_paused function
-    #[account(
-        seeds = [b"pause_state"],
-        bump
-    )]
-    pub pause_state: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
-/// Accounts for the `initialize_pause_state` instruction.
+/// Accounts for the `initialize_large_bitmap` instruction.
 #[derive(Accounts)]
-pub struct InitializePauseState<'info> {
+#[instruction(epoch_arg: u16)]
+pub struct InitializeLargeBitmap<'info> {
+    /// CHECK: This account is manually validated and initialized in the instruction handler
     #[account(
-        init,
-        payer = multisig_authority,
-        space = PAUSE_STATE_ACCOUNT_SIZE,
-        seeds = [b"pause_state"],
+        mut,
+        seeds = [LargeBitmap::SEED_PREFIX, multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
         bump
     )]
-    pub pause_state: Account<'info, PauseState>,
+    pub large_bitmap: AccountInfo<'info>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
-/// Accounts for the `set_pause_state` instruction.
+/// Accounts for the `expand_and_write_bitmap` instruction.
 #[derive(Accounts)]
-#[instruction(is_paused: bool)]
-pub struct SetPauseState<'info> {
-    #[account(
-        mut,
-        seeds = [b"pause_state"],
-        bump = pause_state.bump,
-        constraint = pause_state.multisig_authority == multisig_authority.key() @ GatekeeperError::AuthorityMismatch
-    )]
-    pub pause_state: Account<'info, PauseState>,
+pub struct ExpandAndWriteBitmap<'info> {
+    /// CHECK: This account is manually validated in the instruction handler
+    #[account(mut)]
+    pub large_bitmap: AccountInfo<'info>,
+    #[account(mut)]
+    pub multisig_authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+/// Accounts for the `append_data` instruction.
+#[derive(Accounts)]
+pub struct AppendData<'info> {
+    #[account(mut)]
+    pub large_bitmap: AccountLoader<'info, LargeBitmap>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
 }
 
-/// Accounts for the `close_pause_state` instruction.
+/// Accounts for the `clear_data` instruction.
 #[derive(Accounts)]
-pub struct ClosePauseState<'info> {
-    #[account(
-        mut,
-        seeds = [b"pause_state"],
-        bump = pause_state.bump,
-        close = multisig_authority,
-        constraint = pause_state.multisig_authority == multisig_authority.key() @ GatekeeperError::AuthorityMismatch
-    )]
-    pub pause_state: Account<'info, PauseState>,
+pub struct ClearData<'info> {
+    #[account(mut)]
+    pub large_bitmap: AccountLoader<'info, LargeBitmap>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
 }
 
-/// Account storing the global pause state for the program.
-#[account]
-#[derive(Debug)]
-pub struct PauseState {
-    /// The public key of the multisig authority responsible for managing this entry.
-    pub multisig_authority: Pubkey, // Squads multisig account
-    /// The canonical bump seed used for PDA derivation.
-    pub bump: u8,
-    /// A boolean indicating whether the program is paused.
-    pub is_paused: bool,
-}
 
 /// Events emitted by the Saguaro Gatekeeper program for monitoring
 #[event]
@@ -301,21 +537,6 @@ pub struct SandwichValidatorsClosed {
     pub epoch: u16,
 }
 
-#[event]
-pub struct PauseStateChanged {
-    pub authority: Pubkey,
-    pub is_paused: bool,
-}
-
-#[event]
-pub struct PauseStateInitialized {
-    pub authority: Pubkey,
-}
-
-#[event]
-pub struct PauseStateClosed {
-    pub authority: Pubkey,
-}
 
 /// Custom error codes for the Saguaro Gatekeeper program.
 #[error_code]
@@ -344,8 +565,6 @@ pub enum GatekeeperError {
     DuplicateSlots,
     #[msg("Empty slot list may not be intentional.")]
     EmptySlotList,
-    #[msg("The program is currently paused and cannot perform this operation.")]
-    ProgramPaused,
     #[msg("Slot number is outside the acceptable range.")]
     SlotOutOfRange,
     #[msg("Missing sandwich validators account in remaining_accounts.")]

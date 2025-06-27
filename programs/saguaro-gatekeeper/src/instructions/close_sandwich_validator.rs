@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use crate::{CloseSandwichValidator, SandwichValidatorsClosed, GatekeeperError};
-use crate::instructions::pause_utils;
 
 /// Handles the `close_sandwich_validator` instruction.
 ///
@@ -8,8 +7,6 @@ use crate::instructions::pause_utils;
 /// to the `multisig_authority`. Anchor's `close` constraint handles the actual closing
 /// and rent refund automatically.
 pub fn handler(ctx: Context<CloseSandwichValidator>, epoch_to_close: u16) -> Result<()> {
-    // Check if the program is paused before proceeding
-    pause_utils::check_not_paused(&ctx.accounts.pause_state)?;
 
     let epoch = ctx.accounts.sandwich_validators.epoch;
     let authority_key = ctx.accounts.multisig_authority.key();
@@ -28,9 +25,12 @@ pub fn handler(ctx: Context<CloseSandwichValidator>, epoch_to_close: u16) -> Res
         return err!(GatekeeperError::EpochNotFinished);
     }
 
-    msg!("Closing SandwichValidators PDA for epoch {}", epoch);
-    msg!("Current epoch: {}, closing epoch: {}", current_epoch, epoch_to_close);
-    msg!("Rent will be returned to authority: {}", authority_key);
+    #[cfg(feature = "debug-logs")]
+    {
+        msg!("Closing SandwichValidators PDA for epoch {}", epoch);
+        msg!("Current epoch: {}, closing epoch: {}", current_epoch, epoch_to_close);
+        msg!("Rent will be returned to authority: {}", authority_key);
+    }
     
     // Anchor's `close` constraint in the account definition handles:
     // 1. PDA validation (seeds + bump)

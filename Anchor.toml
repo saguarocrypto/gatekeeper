@@ -5,14 +5,17 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
+[programs.devnet]
+saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
+
 [programs.localnet]
-saguaro_gatekeeper = "saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3"
+saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

@@ -1,5 +1,6 @@
 # Saguaro Gatekeeper Program
 
+
 ## Overview
 
 Saguaro Gatekeeper is a Solana program designed to support on-chain permissions.
@@ -118,7 +119,7 @@ pub mod my_program {
     use super::*;
     pub fn do_something_sensitive(ctx: Context<DoSomethingSensitive>) -> Result<()> {
         // --- Saguaro Gatekeeper CPI ---
-        
+
         // 1. Define the Gatekeeper program and authority
         let gatekeeper_program_id = ctx.accounts.saguaro_gatekeeper_program.key();
         let gatekeeper_authority = ctx.accounts.gatekeeper_authority.key();
@@ -162,9 +163,9 @@ pub mod my_program {
         )?;
 
         // --- Gatekeeper validation passed, proceed with sensitive logic ---
-        
+
         msg!("Validation successful, executing sensitive logic...");
-        
+
         // ... your program's logic here ...
 
         Ok(())
@@ -175,16 +176,16 @@ pub mod my_program {
 pub struct DoSomethingSensitive<'info> {
     // Your instruction's accounts...
     pub user: Signer<'info>,
-    
+
     /// CHECK: The Saguaro Gatekeeper program address.
     pub saguaro_gatekeeper_program: AccountInfo<'info>,
-    
+
     /// CHECK: The authority account for the Gatekeeper configuration.
     pub gatekeeper_authority: AccountInfo<'info>,
-    
+
     /// CHECK: The PDA account for the current epoch's sandwich validators.
     pub sandwich_validators_pda: AccountInfo<'info>,
-    
+
     /// The Clock sysvar, required by the Gatekeeper.
     pub clock: Sysvar<'info, Clock>,
 }

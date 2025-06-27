@@ -2,21 +2,20 @@
 
 ## Overview
 
-Gatekeeper is a Solana program designed to support on-chain permissions.
+Gatekeeper is a Solana program for on-chain permissions. 
 
-### Functionality
+This version of Gatekeeper was built to prevent toxic MEV in the Solana ecosystem, particularly sandwich attacks. 
 
-Gatekeeper was built to prevent toxic MEV in the Solana ecosystem, particularly sandwich attacks.
+### Functionality 
 
-This version of Gatekeeper:
-
+Gatekeeper integrates with existing Solana programs. This program:
 1. Uses [sandwiched.me](https://sandwiched.me/sandwiches) to determine the top validators that support sandwich attacks.
 2. Calculates when those sandwiching validators are in the leader slot.
 3. Causes an associated transaction to fail when one of the sandwiching validators is in the leader slot.
 
-The user will then need to re-submit the transaction, which will succeed when a non-sandwiching validator is in the leader slot.
+The user will then need to re-submit the transaction. The transaction succeeds when a non-sandwiching validator is in the leader slot.
 
-### Deployment
+## Deployment
 
 Gatekeeper is deployed with the following Program IDs:
 
@@ -28,7 +27,7 @@ Gatekeeper is deployed with the following Program IDs:
 
 Third-party Solana programs integrate with Gatekeeper via Cross-Program Invocation (CPI).
 
-### Overview
+### Design
 
 To integrate with Gatekeeper, your program will call the `validate_sandwich_validators` instruction. This instruction will either succeed and allow the transaction to continue or fail (blocking the transaction) if the current slot is "gated" by Gatekeeper's configuration.
 
@@ -123,7 +122,7 @@ invoke(
 
 ```
 
-*Note: You must pass the `AccountInfo` for the PDA, authority, and clock into your own instruction so you can then pass them to the `invoke` function.*
+> *💡 Note: You must pass the `AccountInfo` for the PDA, authority, and clock into your own instruction so you can then pass them to the `invoke` function.*
 
 ### Example CPI Instruction
 

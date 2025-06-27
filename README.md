@@ -1,30 +1,51 @@
-# Saguaro Gatekeeper Program
-
+# Saguaro Gatekeeper
 
 ## Overview
 
-Saguaro Gatekeeper is a Solana program designed to support on-chain permissions.
+Gatekeeper is a Solana program designed to support on-chain permissions.
+
+### Functionality
+
+Gatekeeper was built to prevent toxic MEV in the Solana ecosystem, particularly sandwich attacks.
+
+This version of Gatekeeper:
+
+1. Uses [sandwiched.me](https://sandwiched.me/sandwiches) to determine the top validators that support sandwich attacks.
+2. Calculates when those sandwiching validators are in the leader slot.
+3. Causes an associated transaction to fail when one of the sandwiching validators is in the leader slot.
+
+The user will then need to re-submit the transaction, which will succeed when a non-sandwiching validator is in the leader slot.
+
+### Deployment
+
+Gatekeeper is deployed with the following Program IDs:
+
+- Mainnet: `insert ID here`
+- Staging (Mainnet): `insert ID here`
+- Devnet: `insert ID here`
 
 ## CPI Integration Guide
 
-This guide explains how third-party Solana programs can integrate with the Saguaro Gatekeeper via Cross-Program Invocation (CPI) to validate whether an action should be permitted in the current slot.
+Third-party Solana programs integrate with Gatekeeper via Cross-Program Invocation (CPI).
 
 ### Overview
 
-The core of the integration is the `validate_sandwich_validators` instruction. Your program will call this instruction, and it will either succeed (allowing your instruction to continue) or fail (blocking the transaction) based on whether the current slot is "gated" by the gatekeeper's configuration.
+To integrate with Gatekeeper, your program will call the `validate_sandwich_validators` instruction. This instruction will either succeed and allow the transaction to continue or fail (blocking the transaction) if the current slot is "gated" by Gatekeeper's configuration.
 
 This mechanism uses a "fail-open" design:
+
 - If the current slot **is gated**, the instruction fails, causing the parent transaction to fail.
 - If the current slot **is not gated**, the instruction succeeds.
 - If the Gatekeeper is **not configured** for the current epoch (i.e., the PDA account doesn't exist), the instruction succeeds.
 
-### Prerequisites
+### Deriving the PDA Address
 
-To integrate, your program needs to know the `multisig_authority` public key that controls the Saguaro Gatekeeper configuration you wish to use. This key is essential for deriving the correct PDA address.
+To integrate with Gatekeeper, you must use the `multisig_authority` public key controlling the Saguaro Gatekeeper configuration. This key is essential for deriving the correct PDA address.
 
-### 1. Deriving the PDA Address
+- Saguaro’s `multisig_authority` public key: `insert public key here`
 
 The `sandwich_validators` account is a Program-Derived Address (PDA). Your instruction must derive this address to include it in the CPI call. The seeds for the PDA are:
+
 - `b"sandwich_validators"`
 - The `multisig_authority` public key
 - The current `epoch`, encoded as `u16` little-endian bytes
@@ -57,16 +78,18 @@ let (pda_address, _bump_seed) = Pubkey::find_program_address(
     ],
     &GATEKEEPER_PROGRAM_ID,
 );
+
 ```
 
-### 2. Building and Invoking the CPI
+### Building and Invoking the CPI
 
 Once you have the PDA address, you can build and invoke the `validate_sandwich_validators` instruction.
 
 The instruction requires the following accounts:
-1.  `sandwich_validators`: The PDA you derived.
-2.  `multisig_authority`: The gatekeeper's authority key.
-3.  `clock`: The Clock sysvar.
+
+1. `sandwich_validators`: The PDA you derived.
+2. `multisig_authority`: Gatekeeper's authority key.
+3. `clock`: The Clock sysvar.
 
 Here is a Rust example of the CPI call:
 
@@ -97,7 +120,9 @@ invoke(
         ctx.accounts.clock.clone(),
     ],
 )?;
+
 ```
+
 *Note: You must pass the `AccountInfo` for the PDA, authority, and clock into your own instruction so you can then pass them to the `invoke` function.*
 
 ### Example CPI Instruction
@@ -189,4 +214,9 @@ pub struct DoSomethingSensitive<'info> {
     /// The Clock sysvar, required by the Gatekeeper.
     pub clock: Sysvar<'info, Clock>,
 }
+
 ```
+
+## Support
+
+For feedback and support requests, please submit a PR to this repo or message [@saguarocrypto](https://x.com/saguarocrypto) on Twitter/X.

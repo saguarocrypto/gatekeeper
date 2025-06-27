@@ -69,41 +69,19 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
     let max_trackable_slots = bitmap_len * 8;
     let max_trackable_slot = epoch_start_slot + max_trackable_slots as u64;
 
-    // Optimized duplicate checking function - uses sorting for small arrays
+    // Optimized duplicate checking function - uses BTreeSet for simplicity and efficiency
     fn check_duplicates_and_validate(slots: &[u64], epoch_start: u64, max_trackable_slot: u64) -> Result<()> {
         if slots.is_empty() {
             return Ok(());
         }
 
-        // For small arrays, sorting is more compute-efficient than HashSet
-        if slots.len() <= 20 {
-            let mut sorted = slots.to_vec();
-            sorted.sort_unstable();
-            
-            // Check first slot range
-            if sorted[0] < epoch_start || sorted[0] >= max_trackable_slot {
+        let mut unique_slots = std::collections::BTreeSet::new();
+        for &slot in slots {
+            if !unique_slots.insert(slot) {
+                return err!(GatekeeperError::DuplicateSlots);
+            }
+            if slot < epoch_start || slot >= max_trackable_slot {
                 return err!(GatekeeperError::SlotOutOfRange);
-            }
-            
-            // Check duplicates and ranges in a single pass
-            for i in 1..sorted.len() {
-                if sorted[i] == sorted[i-1] {
-                    return err!(GatekeeperError::DuplicateSlots);
-                }
-                if sorted[i] < epoch_start || sorted[i] >= max_trackable_slot {
-                    return err!(GatekeeperError::SlotOutOfRange);
-                }
-            }
-        } else {
-            // Use HashSet for larger arrays
-            let mut unique_slots = std::collections::HashSet::with_capacity(slots.len());
-            for &slot in slots {
-                if !unique_slots.insert(slot) {
-                    return err!(GatekeeperError::DuplicateSlots);
-                }
-                if slot < epoch_start || slot >= max_trackable_slot {
-                    return err!(GatekeeperError::SlotOutOfRange);
-                }
             }
         }
         Ok(())

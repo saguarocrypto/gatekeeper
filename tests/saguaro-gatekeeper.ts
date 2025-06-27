@@ -175,42 +175,45 @@ describe("saguaro-gatekeeper", () => {
     }
   });
 
-  it("should fail validation when the current slot IS gated", async () => {
+  it("should fail validation when a specific slot IS gated", async () => {
     const epochInfo = await provider.connection.getEpochInfo();
     const currentEpoch = epochInfo.epoch;
-    const currentSlot = await provider.connection.getSlot();
     const epochArg = new BN(currentEpoch);
     
-    // Gate the current slot and adjacent slots
-    const slotsToAdd = [
-      new BN(currentSlot - 1),
-      new BN(currentSlot),
-      new BN(currentSlot + 1),
-    ];
-
-    // Try to fetch the existing PDA
-    const { pda } = getSandwichValidatorsPda(
-      multisigAuthority.publicKey,
-      epochArg,
-      program.programId
-    );
+    // Get the actual current slot from the connection
+    const currentSlot = await provider.connection.getSlot();
     
-    // Always use setSandwichValidators to create/overwrite the PDA with the desired slots
+    // Gate multiple slots including current and future slots to ensure we hit one
+    // This accounts for slot advancement during test execution
+    const epochStartSlot = currentEpoch * SLOTS_PER_EPOCH;
+    const slotsToGate = [];
+    
+    // Gate the current slot and the next few slots
+    for (let i = 0; i < 10; i++) {
+      const slotOffset = (currentSlot + i) % SLOTS_PER_EPOCH;
+      const slotToGate = epochStartSlot + slotOffset;
+      slotsToGate.push(new BN(slotToGate));
+    }
+    
+    
     await setSandwichValidators(program, {
       epoch: epochArg.toNumber(),
-      slots: slotsToAdd,
+      slots: slotsToGate,
       multisigAuthority: multisigAuthority.publicKey,
     })
       .signers([multisigAuthority.payer])
       .rpc();
-
+    
     try {
+      // Validate against the specific test epoch
+      // The instruction will check the current slot from Clock sysvar
       const tx = await validateSandwichValidators(program, {
         multisigAuthority: multisigAuthority.publicKey,
+        epoch: epochArg.toNumber(),
       });
       await tx.rpc();
       assert.fail(
-        "Validation should have failed because the current slot is gated."
+        "Validation should have failed because the specific test slot is gated."
       );
     } catch (error) {
       assert.isTrue(
@@ -221,40 +224,20 @@ describe("saguaro-gatekeeper", () => {
   });
 
   it("should succeed validation for a non-existent PDA", async () => {
-    // Get current epoch and ensure there's no PDA for it
-    const epochInfo = await provider.connection.getEpochInfo();
-    const currentEpoch = epochInfo.epoch;
-    const currentSlot = await provider.connection.getSlot();
+    // Use a different multisig authority to ensure we have a clean state
+    const newMultisigAuthority = anchor.web3.Keypair.generate();
     
-    // First, ensure there's no PDA for the current epoch
-    try {
-      await closeSandwichValidator(program, {
-        epoch: currentEpoch,
-        multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
-      // Wait for state to settle
-      await new Promise(resolve => setTimeout(resolve, 200));
-    } catch (e) {
-      // Ignore if it doesn't exist
-    }
-    
-    // Create a PDA for a different epoch to ensure we're testing non-existent current epoch PDA
-    const differentEpoch = currentEpoch + 2000;
-    const futureEpochStartSlot = differentEpoch * SLOTS_PER_EPOCH;
-    await setSandwichValidators(program, {
-      epoch: differentEpoch,
-      slots: [new BN(futureEpochStartSlot)],
-      multisigAuthority: multisigAuthority.publicKey,
-    })
-      .signers([multisigAuthority.payer])
-      .rpc();
+    // Fund the new authority
+    const airdropTx = await provider.connection.requestAirdrop(
+      newMultisigAuthority.publicKey,
+      2 * anchor.web3.LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(airdropTx);
     
     try {
-      // Validation will check current epoch PDA, which doesn't exist
+      // Validation will check current epoch PDA for this new authority, which doesn't exist
       const tx = await validateSandwichValidators(program, {
-        multisigAuthority: multisigAuthority.publicKey,
+        multisigAuthority: newMultisigAuthority.publicKey,
       });
       await tx.rpc();
       assert.ok(
@@ -429,13 +412,12 @@ describe("saguaro-gatekeeper", () => {
     const epochInfo = await provider.connection.getEpochInfo();
     const currentEpoch = new BN(epochInfo.epoch);
 
-    // Use a unique epoch to avoid conflicts (108, 109)
-    const testCurrentEpoch = new BN(108);
-    
     // Test current epoch
+    const testCurrentEpoch = currentEpoch.add(new BN(100)); // Use a high offset to avoid conflicts with other tests
+    
     await setSandwichValidators(program, {
       epoch: testCurrentEpoch.toNumber(),
-      slots: [new BN(testCurrentEpoch.toNumber() * SLOTS_PER_EPOCH)], // Valid slot for test epoch 108
+      slots: [new BN(testCurrentEpoch.toNumber() * SLOTS_PER_EPOCH)],
       multisigAuthority: multisigAuthority.publicKey,
     })
       .signers([multisigAuthority.payer])
@@ -457,11 +439,11 @@ describe("saguaro-gatekeeper", () => {
     }
 
     // Test future epoch
-    const testFutureEpoch = new BN(109);
+    const testFutureEpoch = currentEpoch.add(new BN(200)); // Use a high offset to avoid conflicts with other tests
 
     await setSandwichValidators(program, {
       epoch: testFutureEpoch.toNumber(),
-      slots: [new BN(testFutureEpoch.toNumber() * SLOTS_PER_EPOCH)], // Valid slot for test epoch 109
+      slots: [new BN(testFutureEpoch.toNumber() * SLOTS_PER_EPOCH)],
       multisigAuthority: multisigAuthority.publicKey,
     })
       .signers([multisigAuthority.payer])

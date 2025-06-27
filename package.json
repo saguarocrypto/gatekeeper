@@ -3,7 +3,7 @@
   "scripts": {
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
-    "test:devnet": "chmod +x scripts/run_devnet_tests.sh && ./scripts/run_devnet_tests.sh",
+    "test:devnet": "chmod +x scripts/run-devnet-tests.sh && ./scripts/run-devnet-tests.sh",
     "test:devnet-quick": "npx ts-node scripts/devnet_compute_test.ts"
   },
   "dependencies": {

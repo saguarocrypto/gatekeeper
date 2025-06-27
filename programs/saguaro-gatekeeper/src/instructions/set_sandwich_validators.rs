@@ -24,28 +24,9 @@ pub fn handler(ctx: Context<SetSandwichValidators>, epoch_arg: u16, slots_arg: V
     let epoch_start_slot = (epoch_arg as u64) * SLOTS_PER_EPOCH as u64;
     let epoch_end_slot = epoch_start_slot + SLOTS_PER_EPOCH as u64;
 
-    // Optimized duplicate checking - use sorting for small arrays
-    if !slots_arg.is_empty() && slots_arg.len() <= 20 {
-        let mut sorted_slots = slots_arg.clone();
-        sorted_slots.sort_unstable();
-        
-        // Check first slot range
-        if sorted_slots[0] < epoch_start_slot || sorted_slots[0] >= epoch_end_slot {
-            return err!(GatekeeperError::SlotOutOfRange);
-        }
-        
-        // Check duplicates and ranges in single pass
-        for i in 1..sorted_slots.len() {
-            if sorted_slots[i] == sorted_slots[i-1] {
-                return err!(GatekeeperError::DuplicateSlots);
-            }
-            if sorted_slots[i] < epoch_start_slot || sorted_slots[i] >= epoch_end_slot {
-                return err!(GatekeeperError::SlotOutOfRange);
-            }
-        }
-    } else if !slots_arg.is_empty() {
-        // Use HashSet for larger arrays
-        let mut unique_slots = std::collections::HashSet::with_capacity(slots_arg.len());
+    // Optimized duplicate checking - use BTreeSet for simplicity and efficiency
+    if !slots_arg.is_empty() {
+        let mut unique_slots = std::collections::BTreeSet::new();
         for slot in &slots_arg {
             if !unique_slots.insert(*slot) {
                 return err!(GatekeeperError::DuplicateSlots);

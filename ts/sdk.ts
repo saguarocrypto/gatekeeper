@@ -110,11 +110,11 @@ export const setSandwichValidators = (
 
   return program.methods
     .setSandwichValidators(args.epoch, args.slots)
-    .accounts({
+    .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
       systemProgram: SystemProgram.programId,
-    } as any);
+    });
 };
 
 /**
@@ -154,23 +154,16 @@ export const updateSandwichValidator = (
 
   return program.methods
     .updateSandwichValidator(args.epoch, newSlots, removeSlots)
-    .accounts({
+    .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
       systemProgram: SystemProgram.programId,
-    } as any);
+    });
 };
 
 
 /**
  * Creates a MethodsBuilder to call the `validateSandwichValidators` instruction.
- * 
- * This instruction now automatically derives the current epoch and slot from the Clock sysvar.
- * The instruction will dynamically look up the appropriate SandwichValidators PDA based on
- * the current epoch and validate against the current slot.
- * 
- * Note: The sandwich_validators account must be passed via remainingAccounts.
- * The instruction handler will validate that it matches the expected PDA for the current epoch.
  */
 export const validateSandwichValidators = async (
   program: Program<SaguaroGatekeeper>,
@@ -180,41 +173,33 @@ export const validateSandwichValidators = async (
   }
 ) => {
   let targetEpoch: number;
-  
+
   if (args.epoch !== undefined) {
     // Use manually specified epoch (for testing)
     targetEpoch = args.epoch;
   } else {
     // Get epoch info from the connection
     const epochInfo = await program.provider.connection.getEpochInfo("processed");
-    
+
     // In local test validators, the epoch is typically 0 regardless of slot
     // The Clock sysvar will also report epoch 0
     targetEpoch = epochInfo.epoch;
   }
-  
-  
+
   // Derive the PDA for the target epoch
   const { pda } = getSandwichValidatorsPda(
     args.multisigAuthority,
     new anchor.BN(targetEpoch),
     program.programId
   );
-  
-  
+
   return program.methods
     .validateSandwichValidators()
-    .accounts({
+    .accountsStrict({
+      sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
       clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
-    } as any)
-    .remainingAccounts([
-      {
-        pubkey: pda,
-        isWritable: false,
-        isSigner: false,
-      },
-    ]);
+    });
 };
 
 /**
@@ -236,11 +221,11 @@ export const expandSandwichValidators = (
 
   return program.methods
     .expandSandwichValidators(args.epoch)
-    .accounts({
+    .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
       systemProgram: SystemProgram.programId,
-    } as any);
+    });
 };
 
 /**
@@ -261,11 +246,11 @@ export const closeSandwichValidator = (
 
   return program.methods
     .closeSandwichValidator(args.epoch)
-    .accounts({
+    .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
       systemProgram: SystemProgram.programId,
-    } as any);
+    });
 };
 
 // --- Large Bitmap Instruction Wrapper Functions ---
@@ -288,11 +273,11 @@ export const initializeLargeBitmap = (
 
   return program.methods
     .initializeLargeBitmap(args.epoch)
-    .accounts({
+    .accountsStrict({
       largeBitmap: pda,
       multisigAuthority: args.multisigAuthority,
       systemProgram: SystemProgram.programId,
-    } as any);
+    });
 };
 
 /**
@@ -313,11 +298,11 @@ export const expandBitmap = (
 
   return program.methods
     .expandBitmap()
-    .accounts({
+    .accountsStrict({
       largeBitmap: pda,
       multisigAuthority: args.multisigAuthority,
       systemProgram: SystemProgram.programId,
-    } as any);
+    });
 };
 
 /**
@@ -343,11 +328,11 @@ export const expandAndWriteBitmap = (
   
   return program.methods
     .expandAndWriteBitmap(dataChunkArray, new anchor.BN(args.chunkOffset))
-    .accounts({
+    .accountsStrict({
       largeBitmap: pda,
       multisigAuthority: args.multisigAuthority,
       systemProgram: SystemProgram.programId,
-    } as any);
+    });
 };
 
 /**
@@ -372,10 +357,10 @@ export const appendData = (
   
   return program.methods
     .appendData(dataArray)
-    .accounts({
+    .accountsStrict({
       largeBitmap: pda,
       multisigAuthority: args.multisigAuthority,
-    } as any);
+    });
 };
 
 /**
@@ -396,10 +381,10 @@ export const clearData = (
 
   return program.methods
     .clearData()
-    .accounts({
+    .accountsStrict({
       largeBitmap: pda,
       multisigAuthority: args.multisigAuthority,
-    } as any);
+    });
 };
 
 /**

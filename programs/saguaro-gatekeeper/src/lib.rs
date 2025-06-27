@@ -46,7 +46,7 @@ pub const MAX_ACCOUNT_SIZE: usize = MAX_STORAGE_SIZE; // 10MB maximum
 pub const MAX_REALLOC_SIZE: usize = 10240; // Solana's 10KB reallocation limit per operation
 
 
-declare_id!("DApD5AGWB5TcN83q3NRGGdQtWa3i7w1W7rVUzsvFLBqe");
+declare_id!("8cC3gnBoV9q5ucHroDNwbRihWmFtxew9QAWrZDruqWbf");
 
 #[program]
 pub mod saguaro_gatekeeper {
@@ -424,14 +424,17 @@ pub struct SetSandwichValidators<'info> {
 }
 
 /// Accounts for the `validate_sandwich_validators` instruction.
-/// Derives current epoch/slot from Clock sysvar and validates PDA manually.
 #[derive(Accounts)]
 pub struct ValidateSandwichValidators<'info> {
+    /// The PDA account to be validated.
+    /// CHECK: The address is manually validated in the instruction handler against the
+    /// multisig_authority and current epoch from the clock sysvar.
+    pub sandwich_validators: AccountInfo<'info>,
     /// The multisig authority account used in PDA derivation.
     /// Not a signer as validation is public.
-    /// CHECK: This is used for PDA derivation only
+    /// CHECK: This is used for PDA derivation only and is not a signer.
     pub multisig_authority: AccountInfo<'info>,
-    /// The Clock sysvar to get current epoch and slot
+    /// The Clock sysvar to get current epoch and slot.
     pub clock: Sysvar<'info, Clock>,
 }
 

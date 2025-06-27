@@ -17,11 +17,9 @@ The user will then need to re-submit the transaction. The transaction succeeds w
 
 ## Deployment
 
-Gatekeeper is deployed with the following Program IDs:
+Gatekeeper is deployed in the following Program ID:
 
-- Mainnet: `insert ID here`
-- Staging (Mainnet): `insert ID here`
-- Devnet: `insert ID here`
+- Mainnet: `saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3`
 
 ## CPI Integration Guide
 
@@ -61,7 +59,7 @@ use anchor_lang::solana_program::{
 };
 
 // The public key of the Saguaro Gatekeeper program
-const GATEKEEPER_PROGRAM_ID: Pubkey = pubkey!("<GATEKEEPER_PROGRAM_ID>");
+const GATEKEEPER_PROGRAM_ID: Pubkey = pubkey!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
 // The public key of the multisig authority for the gatekeeper configuration
 const GATEKEEPER_AUTHORITY: Pubkey = pubkey!("<GATEKEEPER_MULTISIG_AUTHORITY_PUBKEY>");
 

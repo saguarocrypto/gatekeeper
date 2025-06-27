@@ -5,11 +5,14 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
+[programs.localnet]
+saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
+
 [programs.devnet]
 saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
 
-[programs.localnet]
-saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
+[programs.mainnet]
+saguaro_gatekeeper = "saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3"
 
 [registry]
 url = "https://api.apr.dev"

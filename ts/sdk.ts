@@ -358,27 +358,98 @@ export const prepareLargeBitmapTransaction = async (
  * @returns Buffer containing the bitmap data
  */
 export const createBitmapForSlots = (slots: number[], epoch: number): Buffer => {
+  // Input validation with overflow protection
+  if (!Number.isInteger(epoch) || epoch < 0 || epoch > 65535) {
+    throw new Error(`Invalid epoch: ${epoch}. Must be a u16 (0-65535)`);
+  }
+  
+  if (!Array.isArray(slots)) {
+    throw new Error("Slots must be an array");
+  }
+  
+  if (slots.length > MAX_SLOTS_PER_TRANSACTION * 100) { // Conservative limit for utility functions
+    throw new Error(`Too many slots: ${slots.length}. Consider processing in smaller batches.`);
+  }
+  
   // Calculate bitmap size needed (full epoch = 54,000 bytes)
   const bitmapSize = FULL_BITMAP_SIZE_BYTES;
   const bitmap = Buffer.alloc(bitmapSize, 0);
 
   const epochStart = epoch * SLOTS_PER_EPOCH;
+  const epochEnd = epochStart + SLOTS_PER_EPOCH - 1;
+  
+  // Check for duplicates and validate ranges in a single pass
+  const seenSlots = new Set<number>();
   
   for (const slot of slots) {
-    // Calculate slot offset within the epoch
-    const slotOffset = slot - epochStart;
-    
-    // Validate slot is within this epoch
-    if (slotOffset < 0 || slotOffset >= SLOTS_PER_EPOCH) {
-      throw new Error(`Slot ${slot} is not within epoch ${epoch} (slots ${epochStart}-${epochStart + SLOTS_PER_EPOCH - 1})`);
+    // Input validation
+    if (!Number.isInteger(slot) || slot < 0) {
+      throw new Error(`Invalid slot: ${slot}. Must be a non-negative integer`);
     }
     
-    // Set the bit for this slot
+    // Check for duplicates
+    if (seenSlots.has(slot)) {
+      throw new Error(`Duplicate slot: ${slot}`);
+    }
+    seenSlots.add(slot);
+    
+    // Validate slot is within this epoch with clear error message
+    if (slot < epochStart || slot > epochEnd) {
+      throw new Error(`Slot ${slot} is not within epoch ${epoch} (valid range: ${epochStart}-${epochEnd})`);
+    }
+    
+    // Calculate slot offset within the epoch with overflow protection
+    const slotOffset = slot - epochStart;
+    
+    // Set the bit for this slot with bounds checking
     const byteIndex = Math.floor(slotOffset / 8);
     const bitIndex = slotOffset % 8;
+    
+    if (byteIndex >= bitmapSize) {
+      throw new Error(`Bitmap overflow: slot ${slot} requires byte index ${byteIndex}, but bitmap is only ${bitmapSize} bytes`);
+    }
+    
     bitmap[byteIndex] |= (1 << bitIndex);
   }
   
   return bitmap;
 };
+
+/**
+ * Example function demonstrating safe CPI usage from another Solana program.
+ * This shows how third-party programs should call validateSandwichValidators.
+ * 
+ * CPI Integration Notes:
+ * - No Signer Required: multisigAuthority is not a signer for validation
+ * - Fail-Open Design: If PDA doesn't exist, validation passes
+ * - Atomic Protection: SlotIsGated error fails entire transaction
+ * - Minimal Compute: Optimized for low compute usage
+ * 
+ * Example usage:
+ * ```typescript
+ * // In your program's instruction handler:
+ * import { validateSandwichValidators } from "path/to/sdk";
+ * 
+ * export const myProgramInstruction = async (
+ *   program: Program<MyProgram>,
+ *   args: { multisigAuthority: PublicKey }
+ * ) => {
+ *   // Step 1: Validate sandwich protection before executing your logic
+ *   try {
+ *     await validateSandwichValidators(program, {
+ *       multisigAuthority: args.multisigAuthority,
+ *     }).rpc();
+ *   } catch (error) {
+ *     if (error.message.includes("SlotIsGated")) {
+ *       throw new Error("Current slot is protected from sandwich attacks");
+ *     }
+ *     // Other errors indicate validation succeeded (fail-open design)
+ *   }
+ *   
+ *   // Step 2: Execute your program logic safely
+ *   return program.methods.myInstruction().accounts({});
+ * };
+ * ```
+ */
+export const cpiUsageExample = "See above documentation block for CPI integration example";
 

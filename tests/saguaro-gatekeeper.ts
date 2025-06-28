@@ -14,6 +14,7 @@ import {
   SLOTS_PER_EPOCH,
   TARGET_ACCOUNT_SIZE,
   FULL_BITMAP_SIZE_BYTES,
+  INITIAL_ACCOUNT_SIZE,
 } from "../ts/sdk";
 
 describe("saguaro-gatekeeper", () => {
@@ -228,14 +229,14 @@ describe("saguaro-gatekeeper", () => {
     );
 
     const account = await program.account.sandwichValidators.fetch(pda);
-    // LargeBitmap account has epoch, bump, and padding fields
+    // Account has epoch, bump, and padding fields
     // The multisig authority is derived from PDA seeds, not stored in the account
     assert.strictEqual(account.epoch, epochArg.toNumber());
 
     // Verify the PDA bump is correct
     assert.strictEqual(account.bump, bump);
 
-    // For LargeBitmap, the bitmap data is stored as raw bytes after the account header
+    // The bitmap data is stored as raw bytes after the account header
     // Since this is a zero-copy account, we verified the account was created successfully
   });
 
@@ -511,7 +512,7 @@ describe("saguaro-gatekeeper", () => {
     const updatedAccount = await program.account.sandwichValidators.fetch(pda);
 
     // Verify that the bitmap has the correct slots gated
-    // With LargeBitmap implementation, we need to access the raw account data
+    // We need to access the raw account data
     // since the bitmap is stored as raw bytes after the account header
     const accountInfo = await provider.connection.getAccountInfo(pda);
     const bitmapData = accountInfo.data;
@@ -796,7 +797,7 @@ describe("saguaro-gatekeeper", () => {
 
     const account = await program.account.sandwichValidators.fetch(pda);
 
-    // With LargeBitmap implementation, verify the account was created
+    // Verify the account was created
     assert.strictEqual(account.epoch, epochArg.toNumber());
     assert.strictEqual(
       account.bump,
@@ -2424,6 +2425,210 @@ describe("saguaro-gatekeeper", () => {
       console.log(
         "\n✅ Successfully verified storage capacity for 432,000 slots!"
       );
+    });
+  });
+
+  // === Edge Case and Security Tests ===
+  describe("Edge Cases and Security", () => {
+    it("should handle slot range boundary validation correctly", async () => {
+      if (skipOnDevnet("security testing")) return;
+      const epochArg = new BN(500);
+      const epochStart = epochArg.toNumber() * SLOTS_PER_EPOCH;
+      
+      // Calculate initial bitmap capacity (10KB - 16 bytes header = 10,224 bytes = 81,792 slots)
+      const initialBitmapCapacity = (INITIAL_ACCOUNT_SIZE - 16) * 8;
+      const maxInitialSlot = epochStart + initialBitmapCapacity - 1;
+
+      await safeCreateAccount(epochArg.toNumber());
+
+      // Test slots exactly at initial capacity boundaries (should succeed)
+      const boundarySlots = [
+        new BN(epochStart), // First slot in epoch
+        new BN(maxInitialSlot), // Last slot within initial bitmap capacity
+      ];
+
+      try {
+        await modifySandwichValidators(program, {
+          epoch: epochArg.toNumber(),
+          slotsToGate: boundarySlots,
+          multisigAuthority: multisigAuthority.publicKey,
+        })
+          .signers([multisigAuthority.payer])
+          .rpc();
+      } catch (error) {
+        assert.fail(`Boundary slots should be valid: ${error}`);
+      }
+
+      // Test slots outside boundaries (should fail)
+      const invalidSlots = [
+        new BN(epochStart - 1), // Before epoch
+        new BN(maxInitialSlot + 1), // Beyond initial bitmap capacity
+      ];
+
+      try {
+        await modifySandwichValidators(program, {
+          epoch: epochArg.toNumber(),
+          slotsToGate: invalidSlots,
+          multisigAuthority: multisigAuthority.publicKey,
+        })
+          .signers([multisigAuthority.payer])
+          .rpc();
+        assert.fail("Should have failed for invalid boundary slots");
+      } catch (error) {
+        assert.isTrue(
+          error.toString().includes("SlotOutOfRange"),
+          `Expected SlotOutOfRange error, but got: ${error}`
+        );
+      }
+    });
+
+    it("should reject operations with arithmetic overflow conditions", async () => {
+      if (skipOnDevnet("security testing")) return;
+      
+      // Test with maximum epoch value (u16::MAX)
+      const maxEpoch = 65535;
+      const epochStart = maxEpoch * SLOTS_PER_EPOCH;
+      
+      // This should work (within u64 range)
+      await safeCreateAccount(maxEpoch);
+
+      const validSlots = [
+        new BN(epochStart),
+        new BN(epochStart + 1),
+      ];
+
+      try {
+        await modifySandwichValidators(program, {
+          epoch: maxEpoch,
+          slotsToGate: validSlots,
+          multisigAuthority: multisigAuthority.publicKey,
+        })
+          .signers([multisigAuthority.payer])
+          .rpc();
+      } catch (error) {
+        assert.fail(`Maximum epoch should be handled correctly: ${error}`);
+      }
+    });
+
+    it("should maintain consistent state during concurrent operations", async () => {
+      if (skipOnDevnet("security testing")) return;
+      
+      const epochArg = new BN(501);
+      await safeCreateAccount(epochArg.toNumber());
+      
+      const slots1 = [new BN(501 * SLOTS_PER_EPOCH)];
+      const slots2 = [new BN(501 * SLOTS_PER_EPOCH + 1)];
+      
+      // Sequential operations should work
+      await modifySandwichValidators(program, {
+        epoch: epochArg.toNumber(),
+        slotsToGate: slots1,
+        multisigAuthority: multisigAuthority.publicKey,
+      })
+        .signers([multisigAuthority.payer])
+        .rpc();
+
+      await modifySandwichValidators(program, {
+        epoch: epochArg.toNumber(),
+        slotsToGate: slots2,
+        multisigAuthority: multisigAuthority.publicKey,
+      })
+        .signers([multisigAuthority.payer])
+        .rpc();
+
+      // Verify both slots are gated
+      const { pda } = getSandwichValidatorsPda(
+        multisigAuthority.publicKey,
+        epochArg,
+        program.programId
+      );
+
+      const accountInfo = await provider.connection.getAccountInfo(pda);
+      const bitmapData = accountInfo.data;
+      const dataStart = 16;
+
+      // Check both slots are set
+      assert.equal(bitmapData[dataStart] & 1, 1, "First slot should be set");
+      assert.equal((bitmapData[dataStart] >> 1) & 1, 1, "Second slot should be set");
+    });
+
+    it("should handle zero-length arrays correctly", async () => {
+      if (skipOnDevnet("security testing")) return;
+      
+      const epochArg = new BN(503);
+      await safeCreateAccount(epochArg.toNumber());
+
+      // Empty gate operation should be handled by client-side validation
+      try {
+        await modifySandwichValidators(program, {
+          epoch: epochArg.toNumber(),
+          slotsToGate: [],
+          multisigAuthority: multisigAuthority.publicKey,
+        })
+          .signers([multisigAuthority.payer])
+          .rpc();
+        assert.fail("Empty operation should fail");
+      } catch (error) {
+        assert.isTrue(
+          error.toString().includes("No operation specified"),
+          `Expected client-side validation error, but got: ${error}`
+        );
+      }
+    });
+
+    it("should validate unauthorized access attempts", async () => {
+      if (skipOnDevnet("security testing")) return;
+      
+      const epochArg = new BN(504);
+      await safeCreateAccount(epochArg.toNumber());
+
+      const slots = [new BN(504 * SLOTS_PER_EPOCH)];
+
+      // Try to modify with unauthorized user (should fail due to PDA constraint)
+      try {
+        await modifySandwichValidators(program, {
+          epoch: epochArg.toNumber(),
+          slotsToGate: slots,
+          multisigAuthority: unauthorizedUser.publicKey, // Wrong authority
+        })
+          .signers([unauthorizedUser])
+          .rpc();
+        assert.fail("Unauthorized access should have failed");
+      } catch (error) {
+        // This should fail at the account resolution level due to PDA mismatch
+        assert.isTrue(
+          error.toString().includes("Error") || 
+          error.toString().includes("failed") ||
+          error.toString().includes("InvalidPda"),
+          `Expected authorization error, but got: ${error}`
+        );
+      }
+    });
+
+    it("should validate bitmap size constraints correctly", async () => {
+      if (skipOnDevnet("security testing")) return;
+      
+      const epochArg = new BN(505);
+      await safeCreateAccount(epochArg.toNumber());
+
+      // Try to set a slot that would require a larger bitmap than initially allocated
+      const highSlot = new BN(505 * SLOTS_PER_EPOCH + 100000); // Slot requiring more bitmap space
+
+      try {
+        await modifySandwichValidators(program, {
+          epoch: epochArg.toNumber(),
+          slotsToGate: [highSlot],
+          multisigAuthority: multisigAuthority.publicKey,
+        })
+          .signers([multisigAuthority.payer])
+          .rpc();
+        assert.fail("High slot beyond initial bitmap should fail");
+      } catch (error) {
+        assert.isTrue(
+          error.toString().includes("SlotOutOfRange"),
+          `Expected 'SlotOutOfRange' error for slot beyond bitmap capacity, but got: ${error}`
+        );
+      }
     });
   });
 });

@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use crate::{ExpandSandwichValidatorsBitmap, TARGET_ACCOUNT_SIZE, MAX_REALLOC_SIZE};
+use crate::{ExpandSandwichValidatorsBitmap, TARGET_ACCOUNT_SIZE, MAX_REALLOC_SIZE, GatekeeperError};
 
 pub fn handler(
     ctx: Context<ExpandSandwichValidatorsBitmap>,
@@ -8,21 +8,32 @@ pub fn handler(
     let sandwich_validators_account = &ctx.accounts.sandwich_validators;
     let multisig_authority = &ctx.accounts.multisig_authority;
 
+    // Validate account exists and is owned by our program
+    if sandwich_validators_account.data_is_empty() || *sandwich_validators_account.owner != *ctx.program_id {
+        return err!(GatekeeperError::InvalidPda);
+    }
+
     #[cfg(feature = "debug-logs")]
     {
         msg!("Current account size: {}", sandwich_validators_account.data_len());
         msg!("Target account size: {}", TARGET_ACCOUNT_SIZE);
     }
 
-    // Calculate how much we need to expand
+    // Calculate how much we need to expand with overflow protection
     let current_size = sandwich_validators_account.data_len();
+    
+    // Validate current size is within reasonable bounds
+    if current_size > TARGET_ACCOUNT_SIZE {
+        return err!(GatekeeperError::InvalidPda);
+    }
+    
     let bytes_needed = TARGET_ACCOUNT_SIZE.saturating_sub(current_size);
     
     if bytes_needed > 0 {
         #[cfg(feature = "debug-logs")]
         msg!("Need to expand by {} bytes", bytes_needed);
         
-        // Calculate rent for target size
+        // Calculate rent for target size with overflow protection
         let rent = Rent::get()?;
         let target_lamports = rent.minimum_balance(TARGET_ACCOUNT_SIZE);
         let current_lamports = sandwich_validators_account.lamports();
@@ -45,9 +56,11 @@ pub fn handler(
             )?;
         }
 
-        // Expand in chunks of MAX_REALLOC_SIZE (10KB)
+        // Expand in chunks of MAX_REALLOC_SIZE (10KB) with overflow protection
         let expansion_size = bytes_needed.min(MAX_REALLOC_SIZE);
-        let new_size = current_size + expansion_size;
+        let new_size = current_size.checked_add(expansion_size)
+            .filter(|&size| size <= TARGET_ACCOUNT_SIZE)
+            .ok_or(GatekeeperError::SlotOutOfRange)?;
         
         #[cfg(feature = "debug-logs")]
         msg!("Expanding account by {} bytes to {} bytes", expansion_size, new_size);

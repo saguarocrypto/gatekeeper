@@ -7,18 +7,27 @@ use crate::constants::SLOTS_PER_EPOCH;
 /// This function checks if the current slot is gated by reading only the specific bit
 /// from the bitmap with optimized validation relying on reliable Clock sysvar.
 ///
+/// # CPI Safety Model
+/// This instruction is designed for safe Cross-Program Invocation (CPI) by third-party programs:
+/// - **Fail-Open Design**: If no PDA exists for current epoch, validation passes (allows operation)
+/// - **Authority-Independent**: CPI callers only need to provide multisig_authority pubkey (no signer required)
+/// - **Transaction Atomicity**: SlotIsGated error will cause entire transaction to fail, providing sandwich protection
+/// - **No State Changes**: This is a read-only validation function that never modifies blockchain state
+///
 /// # Security Notes
-/// - Validates PDA address to prevent bypass attacks
-/// - Relies on Clock sysvar reliability to eliminate redundant epoch/range checks
-/// - Uses safe error handling to prevent panics during CPI calls  
+/// - Validates PDA address to prevent bypass attacks using current epoch from Clock sysvar
+/// - PDA derivation failure results in fail-open behavior (ungated) 
+/// - Uses safe error handling to prevent panics during CPI calls
+/// - Clock sysvar provides reliable current slot/epoch data
 ///
 /// # Arguments
 /// * `ctx` - The context containing `ValidateSandwichValidators` accounts
 ///
 /// # Behavior
-/// 1. Validates the provided PDA address matches expected derivation (includes epoch validation)
-/// 2. Directly calculates slot offset and reads bitmap bit
-/// 3. Returns SlotIsGated error if the bit is set, otherwise passes
+/// 1. Derives expected PDA address using current epoch from Clock sysvar
+/// 2. If PDA doesn't match or doesn't exist, treats slot as ungated (fail-open)
+/// 3. If PDA exists and matches, checks specific bit in bitmap for current slot
+/// 4. Returns SlotIsGated error only if slot is explicitly gated in bitmap
 pub fn handler(ctx: Context<ValidateSandwichValidators>) -> Result<()> {
     let clock = &ctx.accounts.clock;
     let current_slot = clock.slot;

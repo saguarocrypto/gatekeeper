@@ -22,11 +22,16 @@ anchor-debug = []
 # Solana program features
 custom-heap = []
 custom-panic = []
+# Network features
+mainnet-beta = []
+devnet = []
+staging = []
 
 
 [dependencies]
 anchor-lang = { version = "0.31.1", features = ["init-if-needed", "lazy-account"] }
 bytemuck = { version = "1.0", features = ["derive"] }
+cfg-if = "1.0"
 
 
 [dev-dependencies]

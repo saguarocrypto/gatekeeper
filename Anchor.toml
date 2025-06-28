@@ -12,7 +12,7 @@ saguaro_gatekeeper = "D291aiDeFSTj1KVJ1ScwTpCFnALaPkNqDQCduGdDBTHg"
 saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
 
 [programs.mainnet]
-saguaro_gatekeeper = "D291aiDeFSTj1KVJ1ScwTpCFnALaPkNqDQCduGdDBTHg"
+saguaro_gatekeeper = "saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3"
 
 [registry]
 url = "https://api.apr.dev"

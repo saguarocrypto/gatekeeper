@@ -38,25 +38,17 @@ pub fn handler(ctx: Context<UpdateSandwichValidator>, epoch_arg: u16, new_slots:
     // Lazy loading - only read the epoch for validation
     let data_borrow = sandwich_validators_ai.try_borrow_data()?;
     
-    // Account structure: discriminator(8) + epoch(2) + slots.len(4) + slots_data + bump(1)
-    const DISCRIMINATOR_SIZE: usize = 8;
-    const EPOCH_SIZE: usize = 2;
-    const VEC_LEN_SIZE: usize = 4;
-    const HEADER_SIZE: usize = DISCRIMINATOR_SIZE + EPOCH_SIZE + VEC_LEN_SIZE;
+    // LargeBitmap structure: discriminator(8) + epoch(2) + bump(1) + padding(5) + bitmap_data
+    const HEADER_SIZE: usize = 16; // LargeBitmap::DATA_OFFSET
     
     // Validate epoch matches
-    let stored_epoch = u16::from_le_bytes([data_borrow[DISCRIMINATOR_SIZE], data_borrow[DISCRIMINATOR_SIZE + 1]]);
+    let stored_epoch = u16::from_le_bytes([data_borrow[8], data_borrow[9]]);
     if stored_epoch != epoch_arg {
         return err!(GatekeeperError::EpochMismatch);
     }
     
-    // Read bitmap length
-    let bitmap_len = u32::from_le_bytes([
-        data_borrow[DISCRIMINATOR_SIZE + EPOCH_SIZE],
-        data_borrow[DISCRIMINATOR_SIZE + EPOCH_SIZE + 1],
-        data_borrow[DISCRIMINATOR_SIZE + EPOCH_SIZE + 2],
-        data_borrow[DISCRIMINATOR_SIZE + EPOCH_SIZE + 3],
-    ]) as usize;
+    // Calculate bitmap length from account size
+    let bitmap_len = data_borrow.len() - HEADER_SIZE;
     
     // Validate bitmap size - allow both initial and expanded sizes
     if bitmap_len < INITIAL_BITMAP_SIZE_BYTES || bitmap_len > FULL_BITMAP_SIZE_BYTES {

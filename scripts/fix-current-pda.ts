@@ -3,7 +3,7 @@ import { web3, BN } from "@coral-xyz/anchor";
 import { SaguaroGatekeeper } from "../target/types/saguaro_gatekeeper";
 import {
   getSandwichValidatorsPda,
-  expandSandwichValidators,
+  // expandSandwichValidators, // REMOVED: Function was removed from contract and SDK
   SLOTS_PER_EPOCH,
 } from "../ts/sdk";
 import { readFileSync } from "fs";
@@ -42,22 +42,24 @@ async function main() {
       const beforeBitmapLen = beforeInfo.data.readUInt32LE(10);
       console.log(`Before fix - Account size: ${beforeInfo.data.length} bytes, Bitmap length: ${beforeBitmapLen} bytes`);
       
-      // Try to expand the PDA to fix the bitmap length
-      console.log("Attempting to fix bitmap length by calling expand...");
+      // REMOVED: expandSandwichValidators was removed from the contract
+      // The bitmap length is now handled correctly at PDA creation time
+      console.log("NOTE: expandSandwichValidators was removed - bitmap length is fixed at creation");
       
-      await expandSandwichValidators(program, {
-        epoch: currentEpoch,
-        multisigAuthority: wallet.publicKey,
-      })
-        .signers([wallet.payer])
-        .rpc();
+      // await expandSandwichValidators(program, {
+      //   epoch: currentEpoch,
+      //   multisigAuthority: wallet.publicKey,
+      // })
+      //   .signers([wallet.payer])
+      //   .rpc();
 
-      // Check after expansion
-      const afterInfo = await connection.getAccountInfo(pda);
-      if (afterInfo) {
-        const afterBitmapLen = afterInfo.data.readUInt32LE(10);
-        console.log(`After fix - Account size: ${afterInfo.data.length} bytes, Bitmap length: ${afterBitmapLen} bytes`);
-        console.log(`Max trackable slots: ${afterBitmapLen * 8}`);
+      // Check current state (no expansion possible)
+      const currentInfo = await connection.getAccountInfo(pda);
+      if (currentInfo) {
+        const currentBitmapLen = currentInfo.data.readUInt32LE(10);
+        console.log(`Current - Account size: ${currentInfo.data.length} bytes, Bitmap length: ${currentBitmapLen} bytes`);
+        console.log(`Max trackable slots: ${currentBitmapLen * 8}`);
+        console.log(`NOTE: If this PDA was created with the old contract, the bitmap size is fixed.`);
       }
     } else {
       console.log("No PDA exists for current epoch");

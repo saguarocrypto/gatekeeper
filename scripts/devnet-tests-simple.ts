@@ -6,7 +6,7 @@ import {
   setSandwichValidators,
   updateSandwichValidator,
   validateSandwichValidators,
-  expandSandwichValidators,
+  // expandSandwichValidators, // REMOVED: Function was removed from contract and SDK
   closeSandwichValidator,
   SLOTS_PER_EPOCH,
 } from "../ts/sdk";
@@ -93,7 +93,9 @@ async function main() {
       // Fetch and verify
       const { pda } = getSandwichValidatorsPda(wallet.publicKey, epoch, program.programId);
       const account = await program.account.sandwichValidators.fetch(pda);
-      console.log(`${colors.green}✓ Verified: Epoch ${account.epoch}, Bitmap size: ${account.slots.length} bytes${colors.reset}`);
+      const pdaInfo = await connection.getAccountInfo(pda);
+      const bitmapSize = pdaInfo ? pdaInfo.data.length - 16 : 0; // Subtract header size
+      console.log(`${colors.green}✓ Verified: Epoch ${account.epoch}, Bitmap size: ${bitmapSize} bytes${colors.reset}`);
     } catch (error) {
       console.log(`${colors.red}✗ Failed: ${error}${colors.reset}`);
     }
@@ -236,81 +238,48 @@ async function main() {
         console.log(`${colors.red}✗ Unexpected failure: ${error}${colors.reset}`);
       }
       
-      // Step 4: Expand the bitmap using the new expand_sandwich_validators instruction
-      console.log(`\n${colors.cyan}Step 4: Expanding sandwich_validators PDA to handle full epoch capacity...${colors.reset}`);
+      // Step 4: Check PDA capacity (expansion functionality was removed)
+      console.log(`\n${colors.cyan}Step 4: Checking sandwich_validators PDA capacity...${colors.reset}`);
+      
+      // REMOVED: expandSandwichValidators was removed from the contract
+      // The PDA is now created with full capacity automatically
+      console.log(`${colors.yellow}NOTE: expandSandwichValidators was removed - PDA is now created with full capacity${colors.reset}`);
       
       // Get the current PDA and check its size
       const { pda: currentEpochPda } = getSandwichValidatorsPda(wallet.publicKey, new BN(currentEpoch), program.programId);
-      const beforeExpansion = await connection.getAccountInfo(currentEpochPda);
-      console.log(`${colors.yellow}Current PDA size before expansion: ${beforeExpansion?.data.length} bytes${colors.reset}`);
+      const pdaInfo = await connection.getAccountInfo(currentEpochPda);
+      console.log(`${colors.yellow}Current PDA size: ${pdaInfo?.data.length} bytes${colors.reset}`);
       
-      // Calculate target size: 54KB for full bitmap + metadata (54000 + 15 = 54015 bytes)
-      const FULL_BITMAP_SIZE_BYTES = 54000; // 432,000 bits / 8 = 54,000 bytes
-      const METADATA_SIZE = 15; // discriminator(8) + epoch(2) + vec_len(4) + bump(1)
-      const targetSize = FULL_BITMAP_SIZE_BYTES + METADATA_SIZE;
-      
-      // Check the bitmap length field before expansion
-      if (beforeExpansion?.data) {
-        const beforeBitmapLen = beforeExpansion.data.readUInt32LE(10);
-        console.log(`${colors.yellow}Current bitmap length field: ${beforeBitmapLen} (max slots: ${beforeBitmapLen * 8})${colors.reset}`);
+      // Check the bitmap capacity
+      if (pdaInfo?.data) {
+        const bitmapLen = pdaInfo.data.length - 16; // Subtract header size (16 bytes for SandwichValidators)
+        console.log(`${colors.yellow}Bitmap data length: ${bitmapLen} bytes (max slots: ${bitmapLen * 8})${colors.reset}`);
+        console.log(`${colors.yellow}Current slot offset: ${currentSlotOffset}${colors.reset}`);
+        
+        if (currentSlotOffset < bitmapLen * 8) {
+          console.log(`${colors.green}✓ PDA has sufficient capacity for current slot${colors.reset}`);
+        } else {
+          console.log(`${colors.red}✗ Current slot offset exceeds PDA capacity${colors.reset}`);
+        }
       }
       
-      // Expand in a loop until we reach the target size (each call expands by max 10KB)
-      let currentSize = beforeExpansion?.data.length || 0;
-      let expansionCount = 0;
-      let lastSig = '';
-      
-      console.log(`${colors.yellow}Target size: ${targetSize} bytes (to handle all 432,000 slots)${colors.reset}`);
-      
-      // Always try to expand at least once to fix the bitmap length field
-      do {
-        expansionCount++;
-        console.log(`${colors.yellow}Expansion ${expansionCount}: Current size ${currentSize} bytes, need ${targetSize - currentSize} more bytes${colors.reset}`);
-        
-        try {
-          const step4Sig = await expandSandwichValidators(program, {
-            epoch: currentEpoch,
-            multisigAuthority: wallet.publicKey,
-          })
-            .signers([wallet.payer])
-            .rpc();
-          
-          lastSig = step4Sig;
-          
-          // Check new size and bitmap length
-          const afterExpansion = await connection.getAccountInfo(currentEpochPda);
-          currentSize = afterExpansion?.data.length || 0;
-          
-          if (afterExpansion?.data) {
-            const newBitmapLen = afterExpansion.data.readUInt32LE(10);
-            console.log(`${colors.green}✓ Expansion ${expansionCount} complete: ${currentSize} bytes, bitmap length: ${newBitmapLen}${colors.reset}`);
-          }
-        } catch (error) {
-          console.log(`${colors.yellow}Expansion ${expansionCount} error: ${error}${colors.reset}`);
-          // If we get an error and the size is already correct, it might just need the bitmap length fixed
-          break;
-        }
-        
-        // Safety check to prevent infinite loops
-        if (expansionCount > 10) {
-          console.log(`${colors.red}✗ Too many expansion attempts, stopping${colors.reset}`);
-          break;
-        }
-      } while (currentSize < targetSize);
-      
-      const finalSize = await connection.getAccountInfo(currentEpochPda);
-      const maxTrackableSlots = (finalSize?.data.length || 0 - METADATA_SIZE) * 8;
-      
-      // Debug: Check the bitmap length field in the account data
-      if (finalSize?.data) {
-        const bitmapLen = finalSize.data.readUInt32LE(10); // discriminator(8) + epoch(2) = 10 bytes offset
-        console.log(`${colors.yellow}Debug: Account size: ${finalSize.data.length}, Bitmap length field: ${bitmapLen}${colors.reset}`);
-        console.log(`${colors.yellow}Debug: Max trackable slots from bitmap field: ${bitmapLen * 8}${colors.reset}`);
-      }
-      
-      console.log(`${colors.green}✓ PDA expanded to ${finalSize?.data.length} bytes in ${expansionCount} calls${colors.reset}`);
-      console.log(`${colors.green}✓ Can now track up to ${maxTrackableSlots} slots (need ${currentSlotOffset})${colors.reset}`);
-      console.log(`${colors.blue}📋 Final Transaction: ${getExplorerLink(lastSig)}${colors.reset}`);
+      // // Old expansion code (removed):
+      // do {
+      //   expansionCount++;
+      //   console.log(`${colors.yellow}Expansion ${expansionCount}: Current size ${currentSize} bytes, need ${targetSize - currentSize} more bytes${colors.reset}`);
+      //   
+      //   try {
+      //     const step4Sig = await expandSandwichValidators(program, {
+      //       epoch: currentEpoch,
+      //       multisigAuthority: wallet.publicKey,
+      //     })
+      //       .signers([wallet.payer])
+      //       .rpc();
+      //     ...
+      //   } catch (error) {
+      //     ...
+      //   }
+      // } while (currentSize < targetSize);
       
       // Step 5: Test validation after expansion (should succeed)
       console.log(`\n${colors.cyan}Step 5: validate_sandwich_validators after expansion (should succeed)...${colors.reset}`);
@@ -340,7 +309,7 @@ async function main() {
       // Check the PDA's bitmap capacity
       const pdaBeforeGating = await connection.getAccountInfo(currentEpochPda);
       if (pdaBeforeGating?.data) {
-        const bitmapLen = pdaBeforeGating.data.readUInt32LE(10);
+        const bitmapLen = pdaBeforeGating.data.length - 16; // Subtract header size (16 bytes for SandwichValidators)
         const maxTrackableSlots = bitmapLen * 8;
         console.log(`${colors.yellow}Bitmap capacity: ${bitmapLen} bytes (max ${maxTrackableSlots} slots)${colors.reset}`);
         
@@ -495,8 +464,9 @@ async function main() {
       
       // Summary
       console.log(`\n${colors.cyan}Test 4 Summary:${colors.reset}`);
-      console.log(`${colors.yellow}- Created small bitmap PDA (${beforeExpansion?.data.length} bytes)${colors.reset}`);
-      console.log(`${colors.yellow}- Expanded bitmap PDA to (${finalSize?.data.length} bytes)${colors.reset}`);
+      const finalPdaInfo = await connection.getAccountInfo(currentEpochPda);
+      console.log(`${colors.yellow}- Created large bitmap PDA (${finalPdaInfo?.data.length || 'unknown'} bytes total)${colors.reset}`);
+      console.log(`${colors.yellow}- PDA includes full epoch capacity (expandSandwichValidators was removed)${colors.reset}`);
       if (!gatingSkipped) {
         console.log(`${colors.yellow}- Dynamically gated current slot range (${overallStartOffset}-${overallEndOffset})${colors.reset}`);
         console.log(`${colors.yellow}- Validation correctly ${validationSlotOffset >= overallStartOffset && validationSlotOffset <= overallEndOffset ? 'failed for gated slot' : 'passed for ungated slot'}${colors.reset}`);

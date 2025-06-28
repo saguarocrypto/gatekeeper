@@ -4,7 +4,7 @@ import { SaguaroGatekeeper } from "../target/types/saguaro_gatekeeper";
 import {
   getSandwichValidatorsPda,
   setSandwichValidators,
-  expandSandwichValidators,
+  // expandSandwichValidators, // REMOVED: Function was removed from contract and SDK
   updateSandwichValidator,
   SLOTS_PER_EPOCH,
 } from "../ts/sdk";
@@ -82,22 +82,27 @@ async function testExpansionFix() {
     let currentSize = initialAccount?.data.length || 0;
     let expansionCount = 0;
     
-    while (currentSize < targetSize && expansionCount < 10) {
-      expansionCount++;
-      console.log(`${colors.yellow}Expansion ${expansionCount}: Current size ${currentSize}, target ${targetSize}${colors.reset}`);
-      
-      await expandSandwichValidators(program, {
-        epoch: testEpoch,
-        multisigAuthority: wallet.publicKey,
-      })
-        .signers([wallet.payer])
-        .rpc();
-      
-      const updatedAccount = await connection.getAccountInfo(pda);
-      currentSize = updatedAccount?.data.length || 0;
-      
-      console.log(`${colors.green}✓ Expansion ${expansionCount}: New size ${currentSize}${colors.reset}`);
-    }
+    // REMOVED: expandSandwichValidators functionality was removed from the contract
+    // The bitmap expansion is now handled automatically when creating the PDA
+    console.log(`${colors.yellow}NOTE: expandSandwichValidators was removed - bitmap size is now fixed at creation${colors.reset}`);
+    
+    // Skip expansion loop since the function no longer exists
+    // while (currentSize < targetSize && expansionCount < 10) {
+    //   expansionCount++;
+    //   console.log(`${colors.yellow}Expansion ${expansionCount}: Current size ${currentSize}, target ${targetSize}${colors.reset}`);
+    //   
+    //   await expandSandwichValidators(program, {
+    //     epoch: testEpoch,
+    //     multisigAuthority: wallet.publicKey,
+    //   })
+    //     .signers([wallet.payer])
+    //     .rpc();
+    //   
+    //   const updatedAccount = await connection.getAccountInfo(pda);
+    //   currentSize = updatedAccount?.data.length || 0;
+    //   
+    //   console.log(`${colors.green}✓ Expansion ${expansionCount}: New size ${currentSize}${colors.reset}`);
+    // }
     
     // Step 4: Check final bitmap length
     const finalAccount = await connection.getAccountInfo(pda);

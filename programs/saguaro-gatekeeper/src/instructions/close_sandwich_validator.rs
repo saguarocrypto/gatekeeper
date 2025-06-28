@@ -8,7 +8,8 @@ use crate::{CloseSandwichValidator, SandwichValidatorsClosed, GatekeeperError};
 /// and rent refund automatically.
 pub fn handler(ctx: Context<CloseSandwichValidator>, epoch_to_close: u16) -> Result<()> {
 
-    let epoch = ctx.accounts.sandwich_validators.epoch;
+    let sandwich_validators = ctx.accounts.sandwich_validators.load()?;
+    let epoch = sandwich_validators.epoch;
     let authority_key = ctx.accounts.multisig_authority.key();
 
     // Verify the epoch_to_close matches the PDA's epoch

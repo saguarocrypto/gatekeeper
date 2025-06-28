@@ -15,6 +15,8 @@ Gatekeeper integrates with existing Solana programs. This program:
 
 The user will then need to re-submit the transaction. The transaction succeeds when a non-sandwiching validator is in the leader slot.
 
+For detailed information about all available instructions, including core CRUD operations and helper functions, see the [Saguaro Gatekeeper Instructions Guide](programs/saguaro-gatekeeper/src/README.md).
+
 ## Deployment
 
 Gatekeeper is deployed in the following Program ID:
@@ -212,6 +214,133 @@ pub struct DoSomethingSensitive<'info> {
 }
 
 ```
+
+## Gatekeeper Setup Examples
+
+Here are examples showing how to set up and configure the Saguaro Gatekeeper using the current CRUD workflow:
+
+### TypeScript Client Examples
+
+```typescript
+import { 
+  setSandwichValidators,
+  expandSandwichValidatorsBitmap,
+  modifySandwichValidators,
+  validateSandwichValidators,
+  closeSandwichValidator
+} from './sdk';
+
+// Example: Complete setup workflow for a new epoch
+async function setupGatekeeper(
+  program: Program<SaguaroGatekeeper>,
+  epoch: number,
+  multisigAuthority: PublicKey,
+  slotsToGate: number[]
+) {
+  // 1. CREATE: Create account for the epoch (starts at 10KB)
+  await setSandwichValidators(program, {
+    epoch: epoch,
+    multisigAuthority: multisigAuthority
+  })
+    .signers([authorityKeypair])
+    .rpc();
+
+  // 2. Expand to full size (54KB) - required for full epoch capacity
+  await expandSandwichValidatorsBitmap(program, {
+    epoch: epoch,
+    multisigAuthority: multisigAuthority
+  })
+    .signers([authorityKeypair])
+    .rpc();
+
+  // 3. UPDATE: Gate specific slots
+  await modifySandwichValidators(program, {
+    epoch: epoch,
+    slotsToGate: slotsToGate,
+    multisigAuthority: multisigAuthority
+  })
+    .signers([authorityKeypair])
+    .rpc();
+
+  console.log(`Gatekeeper configured for epoch ${epoch} with ${slotsToGate.length} gated slots`);
+}
+
+// Example: Updating slot configuration
+async function updateSlotConfiguration(
+  program: Program<SaguaroGatekeeper>,
+  epoch: number,
+  multisigAuthority: PublicKey,
+  newSlotsToGate: number[],
+  slotsToUngate: number[]
+) {
+  // UPDATE: Gate new slots and ungate old slots in the same transaction
+  await modifySandwichValidators(program, {
+    epoch: epoch,
+    slotsToGate: newSlotsToGate,
+    slotsToUngate: slotsToUngate,
+    multisigAuthority: multisigAuthority
+  })
+    .signers([authorityKeypair])
+    .rpc();
+
+  console.log(`Updated configuration: +${newSlotsToGate.length} gated, -${slotsToUngate.length} ungated`);
+}
+
+// Example: Validation (typically called by other programs via CPI)
+async function checkCurrentSlot(
+  program: Program<SaguaroGatekeeper>,
+  multisigAuthority: PublicKey
+) {
+  try {
+    // READ: Validate current slot (uses current epoch automatically)
+    await validateSandwichValidators(program, {
+      multisigAuthority: multisigAuthority
+    }).rpc();
+    
+    console.log("Current slot is not gated - operation allowed");
+    return true;
+  } catch (error) {
+    if (error.toString().includes("SlotIsGated")) {
+      console.log("Current slot is gated - operation blocked");
+      return false;
+    }
+    throw error;
+  }
+}
+
+// Example: Cleanup when epoch is finished
+async function cleanupFinishedEpoch(
+  program: Program<SaguaroGatekeeper>,
+  epochToClose: number,
+  multisigAuthority: PublicKey
+) {
+  // DELETE: Close past epoch and refund rent
+  await closeSandwichValidator(program, {
+    epoch: epochToClose,
+    multisigAuthority: multisigAuthority
+  })
+    .signers([authorityKeypair])
+    .rpc();
+
+  console.log(`Closed epoch ${epochToClose} and refunded rent`);
+}
+```
+
+### Architecture Notes
+
+The Saguaro Gatekeeper uses a clear **CRUD pattern**:
+
+- **CREATE**: `setSandwichValidators` - Creates account (10KB initial size)
+- **READ**: `validateSandwichValidators` - Validates current slot (CPI-safe)  
+- **UPDATE**: `modifySandwichValidators` - Gates/ungates slots
+- **DELETE**: `closeSandwichValidator` - Closes past epochs
+
+**Key Implementation Details**:
+- Accounts start at 10KB due to Solana System Program limitations
+- Use `expandSandwichValidatorsBitmap` to reach full 54KB capacity (432,000 slots)
+- Each bit represents one slot: `0` = ungated, `1` = gated
+- PDA derivation: `[b"sandwich_validators", authority.key(), epoch.to_le_bytes()]`
+- Maximum 100 slots per `modifySandwichValidators` transaction
 
 ## Support
 

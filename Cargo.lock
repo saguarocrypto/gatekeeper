@@ -2407,6 +2407,7 @@ dependencies = [
  "anchor-lang",
  "bincode",
  "bytemuck",
+ "cfg-if",
  "mollusk-svm",
  "mollusk-svm-bencher",
  "solana-logger",

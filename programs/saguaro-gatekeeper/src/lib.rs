@@ -430,6 +430,8 @@ pub enum GatekeeperError {
     EmptySlotList,
     #[msg("Slot number is outside the acceptable range.")]
     SlotOutOfRange,
+    #[msg("Slot numbers overlap between slots_to_gate and slots_to_ungate.")]
+    OverlapSlots,
     #[msg("Missing sandwich validators account in remaining_accounts.")]
     MissingSandwichValidatorsAccount,
     #[msg("Invalid sandwich validators PDA provided.")]

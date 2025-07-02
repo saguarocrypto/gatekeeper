@@ -32,6 +32,26 @@ pub fn handler(ctx: Context<ModifySandwichValidators>, epoch_arg: u16, slots_to_
         return Ok(());
     }
 
+    // Check for overlaps between slots_to_gate and slots_to_ungate
+    let mut i = 0;
+    let mut j = 0;
+    let mut no_overlaps = true;
+    
+    while i < slots_to_gate.len() && j < slots_to_ungate.len() {
+        match slots_to_gate[i].cmp(&slots_to_ungate[j]) {
+            core::cmp::Ordering::Less => i += 1,
+            core::cmp::Ordering::Greater => j += 1,
+            core::cmp::Ordering::Equal => {
+                no_overlaps = false;
+                break;
+            }
+        }
+    }
+    
+    if !no_overlaps {
+        return err!(GatekeeperError::OverlapSlots);
+    }
+
     let sandwich_validators_ai = &ctx.accounts.sandwich_validators;
     let multisig_authority = &ctx.accounts.multisig_authority;
 

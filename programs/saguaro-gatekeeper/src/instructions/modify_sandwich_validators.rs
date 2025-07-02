@@ -22,11 +22,8 @@ pub fn handler(ctx: Context<ModifySandwichValidators>, epoch_arg: u16, slots_to_
     // Compile-time assertion to ensure bitmap size is consistent with slot count
     const _: () = assert!(FULL_BITMAP_SIZE_BYTES * 8 >= SLOTS_PER_EPOCH, "Full bitmap must be able to hold all epoch slots");
     // Validate that neither operation exceeds per-transaction limits
-    if slots_to_gate.len() > MAX_SLOTS_PER_TRANSACTION {
-        return err!(GatekeeperError::TooManySlots);
-    }
 
-    if slots_to_ungate.len() > MAX_SLOTS_PER_TRANSACTION {
+    if slots_to_gate.len() + slots_to_ungate.len() > MAX_SLOTS_PER_TRANSACTION {
         return err!(GatekeeperError::TooManySlots);
     }
 

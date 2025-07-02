@@ -938,11 +938,32 @@ describe("saguaro-gatekeeper", () => {
       .signers([multisigAuthority.payer])
       .rpc();
 
-    // Update to larger array - should resize account
+    // Gate the initial slots (2 slots)
+    await modifySandwichValidators(program, {
+      epoch: epochArg.toNumber(),
+      slotsToGate: initialSlots,
+      slotsToUngate: [],
+      multisigAuthority: multisigAuthority.publicKey,
+    })
+      .signers([multisigAuthority.payer])
+      .rpc();
+
+    // Update to larger array - split into two transactions to respect MAX_SLOTS_PER_TRANSACTION limit
+    // First transaction: Ungate initial slots
+    await modifySandwichValidators(program, {
+      epoch: epochArg.toNumber(),
+      slotsToGate: [],
+      slotsToUngate: initialSlots,
+      multisigAuthority: multisigAuthority.publicKey,
+    })
+      .signers([multisigAuthority.payer])
+      .rpc();
+
+    // Second transaction: Gate larger array (100 slots)
     await modifySandwichValidators(program, {
       epoch: epochArg.toNumber(),
       slotsToGate: largerSlots,
-      slotsToUngate: initialSlots, // Remove initial slots to test replacement
+      slotsToUngate: [],
       multisigAuthority: multisigAuthority.publicKey,
     })
       .signers([multisigAuthority.payer])
@@ -999,11 +1020,32 @@ describe("saguaro-gatekeeper", () => {
       .signers([multisigAuthority.payer])
       .rpc();
 
-    // Update to smaller array - should resize account
+    // Gate the large slots initially (100 slots)
+    await modifySandwichValidators(program, {
+      epoch: epochArg.toNumber(),
+      slotsToGate: largeSlots,
+      slotsToUngate: [],
+      multisigAuthority: multisigAuthority.publicKey,
+    })
+      .signers([multisigAuthority.payer])
+      .rpc();
+
+    // Update to smaller array - split into two transactions to respect MAX_SLOTS_PER_TRANSACTION limit
+    // First transaction: Ungate large array (100 slots)
+    await modifySandwichValidators(program, {
+      epoch: epochArg.toNumber(),
+      slotsToGate: [],
+      slotsToUngate: largeSlots,
+      multisigAuthority: multisigAuthority.publicKey,
+    })
+      .signers([multisigAuthority.payer])
+      .rpc();
+
+    // Second transaction: Gate smaller array (2 slots)
     await modifySandwichValidators(program, {
       epoch: epochArg.toNumber(),
       slotsToGate: smallSlots,
-      slotsToUngate: largeSlots, // Remove all large slots to test replacement
+      slotsToUngate: [],
       multisigAuthority: multisigAuthority.publicKey,
     })
       .signers([multisigAuthority.payer])

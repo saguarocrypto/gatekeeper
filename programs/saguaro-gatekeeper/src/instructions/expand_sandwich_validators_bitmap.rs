@@ -4,6 +4,7 @@ use crate::{ExpandSandwichValidatorsBitmap, TARGET_ACCOUNT_SIZE, MAX_REALLOC_SIZ
 
 pub fn handler(
     ctx: Context<ExpandSandwichValidatorsBitmap>, 
+    _epoch_arg: u16,
 ) -> Result<()> {
     let sandwich_validators_account = &ctx.accounts.sandwich_validators;
     let multisig_authority = &ctx.accounts.multisig_authority;

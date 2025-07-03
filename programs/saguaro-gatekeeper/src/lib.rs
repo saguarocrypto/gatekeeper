@@ -115,8 +115,9 @@ pub mod saguaro_gatekeeper {
     /// This is used to expand the account beyond the initial 10KB limit.
     pub fn expand_sandwich_validators_bitmap(
         ctx: Context<ExpandSandwichValidatorsBitmap>,
+        epoch_arg: u16,
     ) -> Result<()> {
-        instructions::expand_sandwich_validators_bitmap_handler(ctx)
+        instructions::expand_sandwich_validators_bitmap_handler(ctx, epoch_arg)
     }
 
     /// Append data to the sandwich validators bitmap account.
@@ -350,9 +351,14 @@ pub struct CloseSandwichValidator<'info> {
 
 /// Accounts for the `expand_sandwich_validators_bitmap` instruction.
 #[derive(Accounts)]
+#[instruction(epoch_arg: u16)]
 pub struct ExpandSandwichValidatorsBitmap<'info> {
-    /// CHECK: This account is manually validated in the instruction handler
-    #[account(mut)]
+    /// CHECK: This account is validated through PDA derivation with seeds constraint
+    /// and additional epoch validation in the instruction handler
+    #[account(mut,
+        seeds = [SandwichValidators::SEED_PREFIX, multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
+        bump
+    )]
     pub sandwich_validators: AccountInfo<'info>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,

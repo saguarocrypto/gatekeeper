@@ -218,7 +218,7 @@ export const expandSandwichValidatorsBitmap = (
   );
 
   return program.methods
-    .expandSandwichValidatorsBitmap()
+    .expandSandwichValidatorsBitmap(args.epoch)
     .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,

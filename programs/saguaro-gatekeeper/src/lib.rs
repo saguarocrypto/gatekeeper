@@ -135,8 +135,9 @@ pub mod saguaro_gatekeeper {
     /// This sets all slots in the bitmap to ungated (false).
     pub fn clear_data_sandwich_validators_bitmap(
         ctx: Context<ClearDataSandwichValidatorsBitmap>,
+        epoch_arg: u16,
     ) -> Result<()> {
-        instructions::clear_data_sandwich_validators_bitmap_handler(ctx)
+        instructions::clear_data_sandwich_validators_bitmap_handler(ctx, epoch_arg)
     }
 
 }
@@ -383,8 +384,13 @@ pub struct AppendDataSandwichValidatorsBitmap<'info> {
 
 /// Accounts for the `clear_data_sandwich_validators_bitmap` instruction.
 #[derive(Accounts)]
+#[instruction(epoch_arg: u16)]
 pub struct ClearDataSandwichValidatorsBitmap<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [SandwichValidators::SEED_PREFIX, multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
+        bump
+    )]
     pub sandwich_validators: AccountLoader<'info, SandwichValidators>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,

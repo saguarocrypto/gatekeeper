@@ -9,7 +9,7 @@ use crate::ClearDataSandwichValidatorsBitmap;
 /// # Compute Optimization
 /// - Minimizes logging overhead
 /// - Uses efficient memory clearing operations
-pub fn handler(ctx: Context<ClearDataSandwichValidatorsBitmap>) -> Result<()> {
+pub fn handler(ctx: Context<ClearDataSandwichValidatorsBitmap>, _epoch_arg: u16) -> Result<()> {
     // Get account data for writing
     let account_info = ctx.accounts.sandwich_validators.to_account_info();
     let mut account_data = account_info.try_borrow_mut_data()?;

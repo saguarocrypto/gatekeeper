@@ -281,7 +281,7 @@ export const clearDataSandwichValidatorsBitmap = (
   );
 
   return program.methods
-    .clearDataSandwichValidatorsBitmap()
+    .clearDataSandwichValidatorsBitmap(args.epoch)
     .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,

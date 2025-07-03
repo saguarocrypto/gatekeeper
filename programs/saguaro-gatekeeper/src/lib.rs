@@ -146,16 +146,17 @@ pub mod saguaro_gatekeeper {
 #[repr(C)]
 pub struct SandwichValidators {
     /// The epoch number (u16) to which these slot assignments apply.
-    pub epoch: u16,
-    /// The canonical bump seed used for PDA derivation.
-    pub bump: u8,
-    /// Padding for alignment
-    pub _padding: [u8; 5],
+    pub epoch: u16,          // 2 bytes
+    pub bump: u8,            // 1 byte
+    pub _padding: [u8; 1],   // 1 byte to align `bitmap_len` to 4-byte boundary
+    pub bitmap_len: u32,     // 4 bytes
+    // Total struct size: 8 bytes (2 + 1 + 1 + 4)
+    // With 8-byte discriminator, bitmap data begins at offset 16
 }
 
 impl SandwichValidators {
     pub const SEED_PREFIX: &'static [u8] = b"sandwich_validators";
-    pub const DATA_OFFSET: usize = 16; // discriminator (8) + epoch (2) + bump (1) + padding (5)
+    pub const DATA_OFFSET: usize = 16; // discriminator (8) + epoch (2) + bump (1) + padding (1) + bitmap_len (4)
 
     /// Gets a reference to the bitmap data within the account
     pub fn bitmap_data<'a>(&self, account_data: &'a [u8]) -> &'a [u8] {

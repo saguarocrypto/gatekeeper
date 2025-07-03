@@ -2129,14 +2129,10 @@ describe("saguaro-gatekeeper", () => {
         .signers([multisigAuthority.payer])
         .rpc();
 
-      // Clear all data by writing zeros
-      const clearData = Buffer.alloc(16);
-      clearData.fill(0x00);
-
-      await appendDataSandwichValidatorsBitmap(program, {
+      // Clear all data using the clear instruction
+      await clearDataSandwichValidatorsBitmap(program, {
         epoch: epochArg,
         multisigAuthority: multisigAuthority.publicKey,
-        data: clearData,
       })
         .signers([multisigAuthority.payer])
         .rpc();

@@ -254,7 +254,7 @@ export const appendDataSandwichValidatorsBitmap = (
   const dataArray = args.data;
   
   return program.methods
-    .appendDataSandwichValidatorsBitmap(dataArray)
+    .appendDataSandwichValidatorsBitmap(args.epoch, dataArray)
     .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,

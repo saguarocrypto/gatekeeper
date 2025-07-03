@@ -125,9 +125,10 @@ pub mod saguaro_gatekeeper {
     /// Most users should use `modify_sandwich_validators` instead.
     pub fn append_data_sandwich_validators_bitmap(
         ctx: Context<AppendDataSandwichValidatorsBitmap>,
+        epoch_arg: u16,
         data: Vec<u8>,
     ) -> Result<()> {
-        instructions::append_data_sandwich_validators_bitmap_handler(ctx, data)
+        instructions::append_data_sandwich_validators_bitmap_handler(ctx, epoch_arg, data)
     }
 
     /// Clear all data in the sandwich validators bitmap account.
@@ -355,7 +356,8 @@ pub struct CloseSandwichValidator<'info> {
 pub struct ExpandSandwichValidatorsBitmap<'info> {
     /// CHECK: This account is validated through PDA derivation with seeds constraint
     /// and additional epoch validation in the instruction handler
-    #[account(mut,
+    #[account(
+        mut,
         seeds = [SandwichValidators::SEED_PREFIX, multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
         bump
     )]
@@ -367,8 +369,13 @@ pub struct ExpandSandwichValidatorsBitmap<'info> {
 
 /// Accounts for the `append_data_sandwich_validators_bitmap` instruction.
 #[derive(Accounts)]
+#[instruction(epoch_arg: u16)]
 pub struct AppendDataSandwichValidatorsBitmap<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [SandwichValidators::SEED_PREFIX, multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
+        bump
+    )]
     pub sandwich_validators: AccountLoader<'info, SandwichValidators>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,

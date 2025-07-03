@@ -11,7 +11,7 @@ use crate::AppendDataSandwichValidatorsBitmap;
 /// - Minimizes logging overhead
 /// - Early return for empty data
 /// - Direct memory operations
-pub fn handler(ctx: Context<AppendDataSandwichValidatorsBitmap>, data: Vec<u8>) -> Result<()> {
+pub fn handler(ctx: Context<AppendDataSandwichValidatorsBitmap>, _epoch_arg: u16, data: Vec<u8>) -> Result<()> {
     // Validate data size early to avoid unnecessary loads
     if data.is_empty() {
         return Ok(());

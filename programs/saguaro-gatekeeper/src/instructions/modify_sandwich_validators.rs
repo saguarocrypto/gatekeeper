@@ -18,7 +18,7 @@ use crate::{ModifySandwichValidators, SandwichValidatorsUpdated, MAX_SLOTS_PER_T
 /// - Avoids full deserialization of the bitmap account
 /// - Uses stack-based duplicate checking for small arrays
 /// - Performs direct bit manipulation on borrowed account data
-pub fn handler(ctx: Context<ModifySandwichValidators>, epoch_arg: u16, slots_to_gate: Vec<u64>, slots_to_ungate: Vec<u64>) -> Result<()> {
+pub fn handler(ctx: Context<ModifySandwichValidators>, epoch_arg: u16, mut slots_to_gate: Vec<u64>, mut slots_to_ungate: Vec<u64>) -> Result<()> {
     // Compile-time assertion to ensure bitmap size is consistent with slot count
     const _: () = assert!(FULL_BITMAP_SIZE_BYTES * 8 >= SLOTS_PER_EPOCH, "Full bitmap must be able to hold all epoch slots");
     // Validate that neither operation exceeds per-transaction limits
@@ -36,6 +36,8 @@ pub fn handler(ctx: Context<ModifySandwichValidators>, epoch_arg: u16, slots_to_
     let mut i = 0;
     let mut j = 0;
     let mut no_overlaps = true;
+    slots_to_gate.sort_unstable();
+    slots_to_ungate.sort_unstable();
     
     while i < slots_to_gate.len() && j < slots_to_ungate.len() {
         match slots_to_gate[i].cmp(&slots_to_ungate[j]) {

@@ -938,11 +938,32 @@ describe("saguaro-gatekeeper", () => {
       .signers([multisigAuthority.payer])
       .rpc();
 
-    // Update to larger array - should resize account
+    // Gate the initial slots (2 slots)
+    await modifySandwichValidators(program, {
+      epoch: epochArg.toNumber(),
+      slotsToGate: initialSlots,
+      slotsToUngate: [],
+      multisigAuthority: multisigAuthority.publicKey,
+    })
+      .signers([multisigAuthority.payer])
+      .rpc();
+
+    // Update to larger array - split into two transactions to respect MAX_SLOTS_PER_TRANSACTION limit
+    // First transaction: Ungate initial slots
+    await modifySandwichValidators(program, {
+      epoch: epochArg.toNumber(),
+      slotsToGate: [],
+      slotsToUngate: initialSlots,
+      multisigAuthority: multisigAuthority.publicKey,
+    })
+      .signers([multisigAuthority.payer])
+      .rpc();
+
+    // Second transaction: Gate larger array (100 slots)
     await modifySandwichValidators(program, {
       epoch: epochArg.toNumber(),
       slotsToGate: largerSlots,
-      slotsToUngate: initialSlots, // Remove initial slots to test replacement
+      slotsToUngate: [],
       multisigAuthority: multisigAuthority.publicKey,
     })
       .signers([multisigAuthority.payer])
@@ -999,11 +1020,32 @@ describe("saguaro-gatekeeper", () => {
       .signers([multisigAuthority.payer])
       .rpc();
 
-    // Update to smaller array - should resize account
+    // Gate the large slots initially (100 slots)
+    await modifySandwichValidators(program, {
+      epoch: epochArg.toNumber(),
+      slotsToGate: largeSlots,
+      slotsToUngate: [],
+      multisigAuthority: multisigAuthority.publicKey,
+    })
+      .signers([multisigAuthority.payer])
+      .rpc();
+
+    // Update to smaller array - split into two transactions to respect MAX_SLOTS_PER_TRANSACTION limit
+    // First transaction: Ungate large array (100 slots)
+    await modifySandwichValidators(program, {
+      epoch: epochArg.toNumber(),
+      slotsToGate: [],
+      slotsToUngate: largeSlots,
+      multisigAuthority: multisigAuthority.publicKey,
+    })
+      .signers([multisigAuthority.payer])
+      .rpc();
+
+    // Second transaction: Gate smaller array (2 slots)
     await modifySandwichValidators(program, {
       epoch: epochArg.toNumber(),
       slotsToGate: smallSlots,
-      slotsToUngate: largeSlots, // Remove all large slots to test replacement
+      slotsToUngate: [],
       multisigAuthority: multisigAuthority.publicKey,
     })
       .signers([multisigAuthority.payer])
@@ -1847,19 +1889,9 @@ describe("saguaro-gatekeeper", () => {
   // === Large Bitmap Tests (432,000 slots) ===
 
   describe("Large Bitmap Operations", () => {
-    const testEpoch = 600;
-
     it("should create a large bitmap account using set_sandwich_validators", async () => {
       if (skipOnDevnet("large bitmap operations")) return;
-      const epochArg = testEpoch;
-
-      // Step 1: Create account with empty slots (starts at 10KB)
-      await setSandwichValidators(program, {
-        epoch: epochArg,
-                multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
+      const epochArg = await safeCreateAccount(600);
 
       const { pda } = getSandwichValidatorsPda(
         multisigAuthority.publicKey,
@@ -1897,15 +1929,7 @@ describe("saguaro-gatekeeper", () => {
 
     it("should create bitmap account with full size using expand workflow", async () => {
       if (skipOnDevnet("large bitmap operations")) return;
-      const epochArg = testEpoch + 1;
-
-      // Step 1: Create account with empty slots (starts at 10KB)
-      await setSandwichValidators(program, {
-        epoch: epochArg,
-                multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
+      const epochArg = await safeCreateAccount(601);
 
       const { pda } = getSandwichValidatorsPda(
         multisigAuthority.publicKey,
@@ -1940,15 +1964,7 @@ describe("saguaro-gatekeeper", () => {
 
     it("should write and read bitmap data", async () => {
       if (skipOnDevnet("large bitmap operations")) return;
-      const epochArg = testEpoch + 2;
-
-      // Step 1: Create account with empty slots (starts at 10KB)
-      await setSandwichValidators(program, {
-        epoch: epochArg,
-                multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
+      const epochArg = await safeCreateAccount(602);
 
       const { pda } = getSandwichValidatorsPda(
         multisigAuthority.publicKey,
@@ -2018,15 +2034,7 @@ describe("saguaro-gatekeeper", () => {
 
     it("should write data to large bitmap using appendDataSandwichValidatorsBitmap", async () => {
       if (skipOnDevnet("large bitmap operations")) return;
-      const epochArg = testEpoch + 3;
-
-      // Create account with empty slots (simplified process)
-      await setSandwichValidators(program, {
-        epoch: epochArg,
-                multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
+      const epochArg = await safeCreateAccount(605);
 
       // Create test data to write (small buffer to avoid serialization issues)
       const testData = Buffer.alloc(16);
@@ -2065,15 +2073,7 @@ describe("saguaro-gatekeeper", () => {
 
     it("should clear all data in large bitmap", async () => {
       if (skipOnDevnet("large bitmap operations")) return;
-      const epochArg = testEpoch + 4;
-
-      // Create account with empty slots (simplified process)
-      await setSandwichValidators(program, {
-        epoch: epochArg,
-                multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
+      const epochArg = await safeCreateAccount(606);
 
       // Write some data first (small buffer to avoid serialization issues)
       const testData = Buffer.alloc(16);
@@ -2087,14 +2087,10 @@ describe("saguaro-gatekeeper", () => {
         .signers([multisigAuthority.payer])
         .rpc();
 
-      // Clear all data by writing zeros
-      const clearData = Buffer.alloc(16);
-      clearData.fill(0x00);
-
-      await appendDataSandwichValidatorsBitmap(program, {
+      // Clear all data using the clear instruction
+      await clearDataSandwichValidatorsBitmap(program, {
         epoch: epochArg,
         multisigAuthority: multisigAuthority.publicKey,
-        data: clearData,
       })
         .signers([multisigAuthority.payer])
         .rpc();
@@ -2124,16 +2120,8 @@ describe("saguaro-gatekeeper", () => {
 
     it("should handle maximum slot operations", async () => {
       if (skipOnDevnet("large bitmap operations")) return;
-      const epochArg = testEpoch + 5;
+      const epochArg = await safeCreateAccount(603);
       const epochStart = epochArg * SLOTS_PER_EPOCH;
-
-      // Step 1: Create account with empty slots (starts at 10KB)
-      await setSandwichValidators(program, {
-        epoch: epochArg,
-                multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
 
       const { pda } = getSandwichValidatorsPda(
         multisigAuthority.publicKey,
@@ -2207,19 +2195,11 @@ describe("saguaro-gatekeeper", () => {
 
     it("should demonstrate storage capacity for 432,000 slots", async () => {
       if (skipOnDevnet("large bitmap operations")) return;
-      const epochArg = testEpoch + 6;
+      const epochArg = await safeCreateAccount(607);
 
       console.log("\n=== Large Bitmap Storage Capacity Test ===");
       console.log(`Testing storage for ${SLOTS_PER_EPOCH} slots`);
       console.log(`Required bitmap size: ${FULL_BITMAP_SIZE_BYTES} bytes`);
-
-      // Create account with empty slots (simplified process)
-      await setSandwichValidators(program, {
-        epoch: epochArg,
-                multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
 
       // For demonstration, just write a small test pattern
       const testData = Buffer.alloc(16);
@@ -2273,7 +2253,7 @@ describe("saguaro-gatekeeper", () => {
 
     it("should support full 432,000 slot storage capacity", async () => {
       if (skipOnDevnet("large bitmap operations")) return;
-      const epochArg = testEpoch + 7;
+      const epochArg = await safeCreateAccount(604);
       const epochStart = epochArg * SLOTS_PER_EPOCH;
 
       console.log("\n=== Testing Full 432,000 Slot Storage Capacity ===");
@@ -2285,12 +2265,6 @@ describe("saguaro-gatekeeper", () => {
       console.log(
         "\nStep 1: Creating bitmap account (10KB initial size)..."
       );
-      await setSandwichValidators(program, {
-        epoch: epochArg,
-                multisigAuthority: multisigAuthority.publicKey,
-      })
-        .signers([multisigAuthority.payer])
-        .rpc();
 
       const { pda } = getSandwichValidatorsPda(
         multisigAuthority.publicKey,

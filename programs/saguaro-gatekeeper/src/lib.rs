@@ -9,27 +9,6 @@ pub mod instructions;
 // Re-export all constants for backward compatibility
 pub use constants::*;
 
-/// Helper functions for compute optimization
-pub mod compute_optimization {
-    use crate::constants::SLOTS_PER_EPOCH;
-    
-    /// Inline helper to calculate slot offset within an epoch
-    #[inline(always)]
-    pub fn calculate_slot_offset(slot: u64, epoch: u16) -> usize {
-        let epoch_start = (epoch as u64) * SLOTS_PER_EPOCH as u64;
-        (slot - epoch_start) as usize
-    }
-    
-    /// Inline helper to calculate byte and bit position for a slot
-    #[inline(always)]
-    pub fn calculate_bit_position(slot_offset: usize) -> (usize, u8) {
-        let byte_index = slot_offset / 8;
-        let bit_index = (slot_offset % 8) as u8;
-        (byte_index, bit_index)
-    }
-}
-
-
 cfg_if::cfg_if! {
     if #[cfg(feature = "mainnet-beta")] {
         declare_id!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
@@ -115,8 +94,9 @@ pub mod saguaro_gatekeeper {
     /// This is used to expand the account beyond the initial 10KB limit.
     pub fn expand_sandwich_validators_bitmap(
         ctx: Context<ExpandSandwichValidatorsBitmap>,
+        epoch_arg: u16,
     ) -> Result<()> {
-        instructions::expand_sandwich_validators_bitmap_handler(ctx)
+        instructions::expand_sandwich_validators_bitmap_handler(ctx, epoch_arg)
     }
 
     /// Append data to the sandwich validators bitmap account.
@@ -124,17 +104,19 @@ pub mod saguaro_gatekeeper {
     /// Most users should use `modify_sandwich_validators` instead.
     pub fn append_data_sandwich_validators_bitmap(
         ctx: Context<AppendDataSandwichValidatorsBitmap>,
+        epoch_arg: u16,
         data: Vec<u8>,
     ) -> Result<()> {
-        instructions::append_data_sandwich_validators_bitmap_handler(ctx, data)
+        instructions::append_data_sandwich_validators_bitmap_handler(ctx, epoch_arg, data)
     }
 
     /// Clear all data in the sandwich validators bitmap account.
     /// This sets all slots in the bitmap to ungated (false).
     pub fn clear_data_sandwich_validators_bitmap(
         ctx: Context<ClearDataSandwichValidatorsBitmap>,
+        epoch_arg: u16,
     ) -> Result<()> {
-        instructions::clear_data_sandwich_validators_bitmap_handler(ctx)
+        instructions::clear_data_sandwich_validators_bitmap_handler(ctx, epoch_arg)
     }
 
 }
@@ -146,138 +128,17 @@ pub mod saguaro_gatekeeper {
 #[repr(C)]
 pub struct SandwichValidators {
     /// The epoch number (u16) to which these slot assignments apply.
-    pub epoch: u16,
-    /// The canonical bump seed used for PDA derivation.
-    pub bump: u8,
-    /// Padding for alignment
-    pub _padding: [u8; 5],
+    pub epoch: u16,          // 2 bytes
+    pub bump: u8,            // 1 byte
+    pub _padding: [u8; 1],   // 1 byte to align `bitmap_len` to 4-byte boundary
+    pub bitmap_len: u32,     // 4 bytes
+    // Total struct size: 8 bytes (2 + 1 + 1 + 4)
+    // With 8-byte discriminator, bitmap data begins at offset 16
 }
 
 impl SandwichValidators {
     pub const SEED_PREFIX: &'static [u8] = b"sandwich_validators";
-    pub const DATA_OFFSET: usize = 16; // discriminator (8) + epoch (2) + bump (1) + padding (5)
-
-    /// Gets a reference to the bitmap data within the account
-    pub fn bitmap_data<'a>(&self, account_data: &'a [u8]) -> &'a [u8] {
-        &account_data[Self::DATA_OFFSET..]
-    }
-
-    /// Gets a mutable reference to the bitmap data within the account
-    pub fn bitmap_data_mut<'a>(&self, account_data: &'a mut [u8]) -> &'a mut [u8] {
-        &mut account_data[Self::DATA_OFFSET..]
-    }
-
-    /// Checks if a specific slot is gated within this epoch
-    pub fn is_slot_gated(&self, slot: u64, account_data: &[u8]) -> bool {
-        let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
-        let epoch_end = epoch_start + SLOTS_PER_EPOCH as u64;
-        
-        // Check if slot is within this epoch's range
-        if slot < epoch_start || slot >= epoch_end {
-            return false;
-        }
-        
-        let slot_offset = (slot - epoch_start) as usize;
-        
-        // Check if slot is within the epoch range
-        if slot_offset >= SLOTS_PER_EPOCH {
-            return false;
-        }
-        
-        let byte_index = slot_offset / 8;
-        let bit_index = slot_offset % 8;
-        
-        let bitmap = self.bitmap_data(account_data);
-        if byte_index >= bitmap.len() {
-            return false;
-        }
-        
-        (bitmap[byte_index] >> bit_index) & 1 == 1
-    }
-    
-    /// Sets a slot as gated within this epoch
-    pub fn set_slot_gated(&self, slot: u64, gated: bool, account_data: &mut [u8]) -> Result<()> {
-        let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
-        let epoch_end = epoch_start + SLOTS_PER_EPOCH as u64;
-        
-        // Check if slot is within this epoch's range
-        if slot < epoch_start || slot >= epoch_end {
-            return err!(GatekeeperError::SlotOutOfRange);
-        }
-        
-        let slot_offset = (slot - epoch_start) as usize;
-        
-        // Check if slot is within our bitmap capacity
-        if slot_offset >= SLOTS_PER_EPOCH {
-            return err!(GatekeeperError::SlotOutOfRange);
-        }
-        
-        let byte_index = slot_offset / 8;
-        let bit_index = slot_offset % 8;
-        
-        let bitmap = self.bitmap_data_mut(account_data);
-        if byte_index >= bitmap.len() {
-            return err!(GatekeeperError::SlotOutOfRange);
-        }
-        
-        if gated {
-            bitmap[byte_index] |= 1 << bit_index;
-        } else {
-            bitmap[byte_index] &= !(1 << bit_index);
-        }
-        
-        Ok(())
-    }
-
-    /// Sets multiple slots as gated with batch optimization
-    /// Groups slots by byte to minimize memory access
-    pub fn set_slots_gated(&self, slots: &[u64], gated: bool, account_data: &mut [u8]) -> Result<()> {
-        let epoch_start = (self.epoch as u64) * SLOTS_PER_EPOCH as u64;
-        let bitmap = self.bitmap_data_mut(account_data);
-        
-        // Group slots by byte index for batch operations
-        let mut byte_operations: std::collections::BTreeMap<usize, Vec<u8>> = std::collections::BTreeMap::new();
-        
-        for &slot in slots {
-            if slot < epoch_start || slot >= epoch_start + SLOTS_PER_EPOCH as u64 {
-                return err!(GatekeeperError::SlotOutOfRange);
-            }
-            
-            let slot_offset = (slot - epoch_start) as usize;
-            let byte_index = slot_offset / 8;
-            let bit_index = (slot_offset % 8) as u8;
-            
-            if byte_index >= bitmap.len() {
-                return err!(GatekeeperError::SlotOutOfRange);
-            }
-            
-            byte_operations.entry(byte_index).or_insert_with(Vec::new).push(bit_index);
-        }
-        
-        // Apply batch operations per byte
-        for (byte_index, bit_indices) in byte_operations {
-            let byte = &mut bitmap[byte_index];
-            for bit_index in bit_indices {
-                if gated {
-                    *byte |= 1 << bit_index;
-                } else {
-                    *byte &= !(1 << bit_index);
-                }
-            }
-        }
-        
-        Ok(())
-    }
-
-    /// Clears all slots (sets all to ungated)
-    /// Uses safe operations with performance optimization for large bitmaps
-    pub fn clear_all_slots(&self, account_data: &mut [u8]) {
-        let bitmap = self.bitmap_data_mut(account_data);
-        
-        // Use safe fill operation for all cases - modern Rust optimizes this well
-        // The compiler will vectorize this operation for large arrays
-        bitmap.fill(0);
-    }
+    pub const DATA_OFFSET: usize = 16; // discriminator (8) + epoch (2) + bump (1) + padding (1) + bitmap_len (4)
 }
 
 /// Accounts for the `set_sandwich_validators` instruction.
@@ -349,9 +210,15 @@ pub struct CloseSandwichValidator<'info> {
 
 /// Accounts for the `expand_sandwich_validators_bitmap` instruction.
 #[derive(Accounts)]
+#[instruction(epoch_arg: u16)]
 pub struct ExpandSandwichValidatorsBitmap<'info> {
-    /// CHECK: This account is manually validated in the instruction handler
-    #[account(mut)]
+    /// CHECK: This account is validated through PDA derivation with seeds constraint
+    /// and additional epoch validation in the instruction handler
+    #[account(
+        mut,
+        seeds = [SandwichValidators::SEED_PREFIX, multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
+        bump
+    )]
     pub sandwich_validators: AccountInfo<'info>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
@@ -360,8 +227,13 @@ pub struct ExpandSandwichValidatorsBitmap<'info> {
 
 /// Accounts for the `append_data_sandwich_validators_bitmap` instruction.
 #[derive(Accounts)]
+#[instruction(epoch_arg: u16)]
 pub struct AppendDataSandwichValidatorsBitmap<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [SandwichValidators::SEED_PREFIX, multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
+        bump
+    )]
     pub sandwich_validators: AccountLoader<'info, SandwichValidators>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
@@ -369,8 +241,13 @@ pub struct AppendDataSandwichValidatorsBitmap<'info> {
 
 /// Accounts for the `clear_data_sandwich_validators_bitmap` instruction.
 #[derive(Accounts)]
+#[instruction(epoch_arg: u16)]
 pub struct ClearDataSandwichValidatorsBitmap<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [SandwichValidators::SEED_PREFIX, multisig_authority.key().as_ref(), &epoch_arg.to_le_bytes()],
+        bump
+    )]
     pub sandwich_validators: AccountLoader<'info, SandwichValidators>,
     #[account(mut)]
     pub multisig_authority: Signer<'info>,
@@ -430,6 +307,8 @@ pub enum GatekeeperError {
     EmptySlotList,
     #[msg("Slot number is outside the acceptable range.")]
     SlotOutOfRange,
+    #[msg("Slot numbers overlap between slots_to_gate and slots_to_ungate.")]
+    OverlapSlots,
     #[msg("Missing sandwich validators account in remaining_accounts.")]
     MissingSandwichValidatorsAccount,
     #[msg("Invalid sandwich validators PDA provided.")]

@@ -218,7 +218,7 @@ export const expandSandwichValidatorsBitmap = (
   );
 
   return program.methods
-    .expandSandwichValidatorsBitmap()
+    .expandSandwichValidatorsBitmap(args.epoch)
     .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
@@ -254,7 +254,7 @@ export const appendDataSandwichValidatorsBitmap = (
   const dataArray = args.data;
   
   return program.methods
-    .appendDataSandwichValidatorsBitmap(dataArray)
+    .appendDataSandwichValidatorsBitmap(args.epoch, dataArray)
     .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,
@@ -281,7 +281,7 @@ export const clearDataSandwichValidatorsBitmap = (
   );
 
   return program.methods
-    .clearDataSandwichValidatorsBitmap()
+    .clearDataSandwichValidatorsBitmap(args.epoch)
     .accountsStrict({
       sandwichValidators: pda,
       multisigAuthority: args.multisigAuthority,

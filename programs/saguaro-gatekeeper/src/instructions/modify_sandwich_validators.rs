@@ -18,21 +18,40 @@ use crate::{ModifySandwichValidators, SandwichValidatorsUpdated, MAX_SLOTS_PER_T
 /// - Avoids full deserialization of the bitmap account
 /// - Uses stack-based duplicate checking for small arrays
 /// - Performs direct bit manipulation on borrowed account data
-pub fn handler(ctx: Context<ModifySandwichValidators>, epoch_arg: u16, slots_to_gate: Vec<u64>, slots_to_ungate: Vec<u64>) -> Result<()> {
+pub fn handler(ctx: Context<ModifySandwichValidators>, epoch_arg: u16, mut slots_to_gate: Vec<u64>, mut slots_to_ungate: Vec<u64>) -> Result<()> {
     // Compile-time assertion to ensure bitmap size is consistent with slot count
     const _: () = assert!(FULL_BITMAP_SIZE_BYTES * 8 >= SLOTS_PER_EPOCH, "Full bitmap must be able to hold all epoch slots");
     // Validate that neither operation exceeds per-transaction limits
-    if slots_to_gate.len() > MAX_SLOTS_PER_TRANSACTION {
-        return err!(GatekeeperError::TooManySlots);
-    }
 
-    if slots_to_ungate.len() > MAX_SLOTS_PER_TRANSACTION {
+    if slots_to_gate.len() + slots_to_ungate.len() > MAX_SLOTS_PER_TRANSACTION {
         return err!(GatekeeperError::TooManySlots);
     }
 
     // Check if both arrays are empty
     if slots_to_gate.is_empty() && slots_to_ungate.is_empty() {
         return Ok(());
+    }
+
+    // Check for overlaps between slots_to_gate and slots_to_ungate
+    let mut i = 0;
+    let mut j = 0;
+    let mut no_overlaps = true;
+    slots_to_gate.sort_unstable();
+    slots_to_ungate.sort_unstable();
+    
+    while i < slots_to_gate.len() && j < slots_to_ungate.len() {
+        match slots_to_gate[i].cmp(&slots_to_ungate[j]) {
+            core::cmp::Ordering::Less => i += 1,
+            core::cmp::Ordering::Greater => j += 1,
+            core::cmp::Ordering::Equal => {
+                no_overlaps = false;
+                break;
+            }
+        }
+    }
+    
+    if !no_overlaps {
+        return err!(GatekeeperError::OverlapSlots);
     }
 
     let sandwich_validators_ai = &ctx.accounts.sandwich_validators;

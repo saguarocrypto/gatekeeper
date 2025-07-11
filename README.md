@@ -41,7 +41,7 @@ This mechanism uses a "fail-open" design:
 
 To integrate with Gatekeeper, you must use the `multisig_authority` public key controlling the Saguaro Gatekeeper configuration. This key is essential for deriving the correct PDA address.
 
-- Saguaro’s `multisig_authority` public key: `insert public key here`
+- Saguaro's `multisig_authority` public key: `GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp`
 
 The `sandwich_validators` account is a Program-Derived Address (PDA). Your instruction must derive this address to include it in the CPI call. The seeds for the PDA are:
 
@@ -63,7 +63,7 @@ use anchor_lang::solana_program::{
 // The public key of the Saguaro Gatekeeper program
 const GATEKEEPER_PROGRAM_ID: Pubkey = pubkey!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
 // The public key of the multisig authority for the gatekeeper configuration
-const GATEKEEPER_AUTHORITY: Pubkey = pubkey!("7RVKFVfy5FCMpc2WxXtz4A4HVKrz3R7vKur5JAfyEyaX");
+const GATEKEEPER_AUTHORITY: Pubkey = pubkey!("GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp");
 
 // Inside your instruction handler...
 let clock = Clock::get()?;
@@ -82,7 +82,7 @@ let (pda_address, _bump_seed) = Pubkey::find_program_address(
 
 ### Building and Invoking the CPI
 
-Once you have the PDA address, you can build and invoke the `validate_sandwich_validators` instruction.
+Once you have the PDA address, you can build and invoke the `validate_sandwich_validators` instruction using the Anchor CPI module.
 
 The instruction requires the following accounts:
 
@@ -90,239 +90,295 @@ The instruction requires the following accounts:
 2. `multisig_authority`: Gatekeeper's authority key.
 3. `clock`: The Clock sysvar.
 
-Here is a Rust example of the CPI call:
+### Adding Gatekeeper as a Dependency
 
-```rust
-// Instruction data for `validate_sandwich_validators`
-// The discriminator is the SHA256 hash of `global::validate_sandwich_validators`
-let instruction_data: Vec<u8> = vec![227, 103, 131, 13, 162, 18, 96, 108];
+First, add the Saguaro Gatekeeper program to your `Cargo.toml`:
 
-let accounts = vec![
-    AccountMeta::new_readonly(pda_address, false),
-    AccountMeta::new_readonly(GATEKEEPER_AUTHORITY, false),
-    AccountMeta::new_readonly(anchor_lang::solana_program::sysvar::clock::ID, false),
-];
-
-let cpi_instruction = Instruction {
-    program_id: GATEKEEPER_PROGRAM_ID,
-    accounts,
-    data: instruction_data,
-};
-
-invoke(
-    &cpi_instruction,
-    &[
-        // Pass the AccountInfo objects for the accounts required by the CPI
-        // These must be passed into your instruction from the client
-        ctx.accounts.sandwich_validators_pda.clone(),
-        ctx.accounts.gatekeeper_authority.clone(),
-        ctx.accounts.clock.clone(),
-    ],
-)?;
-
+```toml
+[dependencies]
+saguaro-gatekeeper = { git = "https://github.com/saguarocrypto/gatekeeper", features = ["cpi"] }
+anchor-lang = "0.30.0"
 ```
 
-> *💡 Note: You must pass the `AccountInfo` for the PDA, authority, and clock into your own instruction so you can then pass them to the `invoke` function.*
-
-### Example CPI Instruction
-
-Here is a complete example of an Anchor instruction that integrates with the Saguaro Gatekeeper.
+### Modern Anchor CPI Implementation
 
 ```rust
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::{
-    program::invoke,
-    instruction::Instruction,
+use saguaro_gatekeeper::{
+    program::SaguaroGatekeeper,
+    accounts::ValidateSandwichValidators,
+    cpi,
 };
 
-declare_id!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
-
-#[program]
-pub mod my_program {
-    use super::*;
-    pub fn do_something_sensitive(ctx: Context<DoSomethingSensitive>) -> Result<()> {
-        // --- Saguaro Gatekeeper CPI ---
-
-        // 1. Define the Gatekeeper program and authority
-        let gatekeeper_program_id = ctx.accounts.saguaro_gatekeeper_program.key();
-        let gatekeeper_authority = ctx.accounts.gatekeeper_authority.key();
-
-        // 2. Derive the PDA address for the current epoch
-        let clock = &ctx.accounts.clock;
-        let current_epoch = clock.epoch as u16;
-        let (pda_address, _bump) = Pubkey::find_program_address(
-            &[
-                b"sandwich_validators",
-                &gatekeeper_authority.to_bytes(),
-                &current_epoch.to_le_bytes(),
-            ],
-            &gatekeeper_program_id,
-        );
-
-        // Ensure the provided PDA account matches the derived address
-        require_keys_eq!(pda_address, ctx.accounts.sandwich_validators_pda.key(), "InvalidSandwichValidatorPDA");
-
-        // 3. Build the CPI instruction
-        let cpi_instruction = Instruction {
-            program_id: gatekeeper_program_id,
-            accounts: vec![
-                AccountMeta::new_readonly(pda_address, false),
-                AccountMeta::new_readonly(gatekeeper_authority, false),
-                AccountMeta::new_readonly(anchor_lang::solana_program::sysvar::clock::ID, false),
-            ],
-            // Instruction discriminator for `validate_sandwich_validators`
-            data: vec![227, 103, 131, 13, 162, 18, 96, 108],
-        };
-
-        // 4. Invoke the CPI
-        invoke(
-            &cpi_instruction,
-            &[
-                ctx.accounts.sandwich_validators_pda.to_account_info(),
-                ctx.accounts.gatekeeper_authority.to_account_info(),
-                ctx.accounts.clock.to_account_info(),
-                ctx.accounts.saguaro_gatekeeper_program.to_account_info(),
-            ],
-        )?;
-
-        // --- Gatekeeper validation passed, proceed with sensitive logic ---
-
-        msg!("Validation successful, executing sensitive logic...");
-
-        // ... your program's logic here ...
-
-        Ok(())
-    }
-}
-
+// Your instruction that needs sandwich protection
 #[derive(Accounts)]
-pub struct DoSomethingSensitive<'info> {
-    // Your instruction's accounts...
+pub struct YourProtectedInstruction<'info> {
+    // Your regular accounts...
     pub user: Signer<'info>,
-
-    /// CHECK: The Saguaro Gatekeeper program address.
-    pub saguaro_gatekeeper_program: AccountInfo<'info>,
-
-    /// CHECK: The authority account for the Gatekeeper configuration.
-    pub gatekeeper_authority: AccountInfo<'info>,
-
-    /// CHECK: The PDA account for the current epoch's sandwich validators.
-    pub sandwich_validators_pda: AccountInfo<'info>,
-
-    /// The Clock sysvar, required by the Gatekeeper.
+    
+    // Required accounts for sandwich validation CPI
+    /// CHECK: PDA will be validated by the gatekeeper program
+    pub sandwich_validators: AccountInfo<'info>,
+    /// CHECK: This is the multisig authority pubkey (GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp)
+    pub multisig_authority: AccountInfo<'info>,
     pub clock: Sysvar<'info, Clock>,
+    pub gatekeeper_program: Program<'info, SaguaroGatekeeper>,
 }
 
+pub fn your_protected_instruction(ctx: Context<YourProtectedInstruction>) -> Result<()> {
+    // First, validate that the current slot is not gated
+    let cpi_accounts = ValidateSandwichValidators {
+        sandwich_validators: ctx.accounts.sandwich_validators.to_account_info(),
+        multisig_authority: ctx.accounts.multisig_authority.to_account_info(),
+        clock: ctx.accounts.clock.to_account_info(),
+    };
+
+    let cpi_ctx = CpiContext::new(
+        ctx.accounts.gatekeeper_program.to_account_info(),
+        cpi_accounts,
+    );
+
+    // This will return an error if the current slot is gated
+    cpi::validate_sandwich_validators(cpi_ctx)?;
+
+    // Your actual instruction logic here
+    // This will only execute if the slot is NOT gated
+    msg!("Slot is not gated, proceeding with instruction");
+
+    Ok(())
+}
 ```
+
+### Client-Side Account Setup
+
+When calling your instruction from the client, you need to provide the correct accounts:
+
+```typescript
+// TypeScript/JavaScript client code
+import { PublicKey, SystemProgram, SYSVAR_CLOCK_PUBKEY } from '@solana/web3.js';
+
+const SAGUARO_GATEKEEPER_PROGRAM_ID = new PublicKey('saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3');
+const MULTISIG_AUTHORITY = new PublicKey('GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp');
+
+// Get current epoch to derive the PDA
+const epochInfo = await connection.getEpochInfo();
+const currentEpoch = epochInfo.epoch;
+
+// Derive the sandwich validators PDA
+const [sandwichValidatorsPda] = PublicKey.findProgramAddressSync(
+  [
+    Buffer.from('sandwich_validators'),
+    MULTISIG_AUTHORITY.toBuffer(),
+    Buffer.from(new Uint16Array([currentEpoch]).buffer)
+  ],
+  SAGUARO_GATEKEEPER_PROGRAM_ID
+);
+
+console.log(`Expected PDA: ${sandwichValidatorsPda.toBase58()}`);
+// Example for epoch 816: 9cXFYv4TJp95wjWtBennqivmR3kBhVYPfmok7SyAaLwu
+
+// Create your instruction
+const instruction = await yourProgram.methods
+  .yourProtectedInstruction()
+  .accounts({
+    user: userKeypair.publicKey,
+    sandwichValidators: sandwichValidatorsPda,
+    multisigAuthority: MULTISIG_AUTHORITY,
+    clock: SYSVAR_CLOCK_PUBKEY,
+    gatekeeperProgram: SAGUARO_GATEKEEPER_PROGRAM_ID,
+    // ... your other accounts
+  })
+  .instruction();
+```
+
+### Error Handling
+
+The CPI will fail with error code `6005` (SlotIsGated) if the current slot is gated:
+
+```rust
+use saguaro_gatekeeper::error::GatekeeperError;
+
+// In your error handling
+match error {
+    GatekeeperError::SlotIsGated => {
+        msg!("Transaction blocked: Current slot is gated for sandwich protection");
+        return Err(error.into());
+    }
+    _ => return Err(error.into()),
+}
+```
+
+### Key Points
+
+**Fail-Open Design**: If the PDA doesn't exist for the current epoch, the validation passes (allows the operation). This ensures your program continues working even if sandwich protection isn't set up.
+
+**Authority Independence**: You only need to provide the multisig authority pubkey (`GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp`) - no signing required.
+
+**Automatic Epoch Handling**: The instruction automatically uses the current epoch from the Clock sysvar to derive the correct PDA.
+
+**Transaction Atomicity**: If the slot is gated, the entire transaction fails, providing sandwich protection.
+
 
 ## Gatekeeper Setup Examples
 
-Here are examples showing how to set up and configure the Saguaro Gatekeeper using the current CRUD workflow:
+Here are examples showing how to set up and configure the Saguaro Gatekeeper using the CLI tool and TypeScript SDK:
 
-### TypeScript Client Examples
+### CLI Tool Examples
+
+The Saguaro Sandwich Updater provides a command-line interface for managing sandwich validator configurations:
+
+```bash
+# 1. Set up validators for current epoch using a validator file
+node dist/main.js \
+    --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY \
+    --authority-keypair keys/GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp.json \
+    --multisig-pubkey Ga335fr6UMYqzusw6aVJp7yw81n3CG8iJuMB7a4jHSeM \
+    set-validators \
+    --validators-file sandwich_validators.txt \
+    --epoch 816
+
+# 2. Create account for a specific epoch
+node dist/main.js \
+    --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY \
+    --authority-keypair keys/GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp.json \
+    --multisig-pubkey Ga335fr6UMYqzusw6aVJp7yw81n3CG8iJuMB7a4jHSeM \
+    create-account \
+    --epoch 817
+
+# 3. Modify existing configuration (gate and ungate specific slots)
+node dist/main.js \
+    --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY \
+    --authority-keypair keys/GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp.json \
+    --multisig-pubkey Ga335fr6UMYqzusw6aVJp7yw81n3CG8iJuMB7a4jHSeM \
+    modify-validators \
+    --epoch 816 \
+    --gate 352033214,352033300,352033400 \
+    --ungate 352033100,352033150
+
+# 4. Validate current slot (read-only check)
+node dist/main.js \
+    --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY \
+    --authority-keypair keys/GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp.json \
+    validate \
+    --epoch 816
+
+# 5. Validate specific slot (read bitmap directly)
+node dist/main.js \
+    --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY \
+    --authority-keypair keys/GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp.json \
+    validate \
+    --epoch 816 \
+    --slot 352033214
+
+# 6. Use direct execution (bypass multisig)
+node dist/main.js \
+    --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY \
+    --authority-keypair keys/GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp.json \
+    --direct \
+    set-validators \
+    --validators-file sandwich_validators.txt \
+    --epoch 816
+```
+
+### TypeScript SDK Examples
 
 ```typescript
-import { 
-  setSandwichValidators,
-  expandSandwichValidatorsBitmap,
-  modifySandwichValidators,
-  validateSandwichValidators,
-  closeSandwichValidator
-} from './sdk';
+import { Connection, PublicKey, Keypair } from '@solana/web3.js';
 
-// Example: Complete setup workflow for a new epoch
-async function setupGatekeeper(
-  program: Program<SaguaroGatekeeper>,
-  epoch: number,
-  multisigAuthority: PublicKey,
-  slotsToGate: number[]
-) {
-  // 1. CREATE: Create account for the epoch (starts at 10KB)
-  await setSandwichValidators(program, {
-    epoch: epoch,
-    multisigAuthority: multisigAuthority
-  })
-    .signers([authorityKeypair])
-    .rpc();
+const connection = new Connection('https://api.mainnet-beta.solana.com');
+const GATEKEEPER_PROGRAM_ID = new PublicKey('saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3');
+const AUTHORITY = new PublicKey('GAtE1mYyAdX7T4JEWkTEvPQoNQ6ZKCYQQzJYs6Hi8iXp');
 
-  // 2. Expand to full size (54KB) - required for full epoch capacity
-  await expandSandwichValidatorsBitmap(program, {
-    epoch: epoch,
-    multisigAuthority: multisigAuthority
-  })
-    .signers([authorityKeypair])
-    .rpc();
+// Example: Check if a specific slot is gated
+async function checkSlotStatus(epoch: number, slot: number): Promise<boolean> {
+  // Derive the PDA
+  const [pdaAddress] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from('sandwich_validators'),
+      AUTHORITY.toBuffer(),
+      Buffer.from(new Uint16Array([epoch]).buffer)
+    ],
+    GATEKEEPER_PROGRAM_ID
+  );
 
-  // 3. UPDATE: Gate specific slots
-  await modifySandwichValidators(program, {
-    epoch: epoch,
-    slotsToGate: slotsToGate,
-    multisigAuthority: multisigAuthority
-  })
-    .signers([authorityKeypair])
-    .rpc();
-
-  console.log(`Gatekeeper configured for epoch ${epoch} with ${slotsToGate.length} gated slots`);
-}
-
-// Example: Updating slot configuration
-async function updateSlotConfiguration(
-  program: Program<SaguaroGatekeeper>,
-  epoch: number,
-  multisigAuthority: PublicKey,
-  newSlotsToGate: number[],
-  slotsToUngate: number[]
-) {
-  // UPDATE: Gate new slots and ungate old slots in the same transaction
-  await modifySandwichValidators(program, {
-    epoch: epoch,
-    slotsToGate: newSlotsToGate,
-    slotsToUngate: slotsToUngate,
-    multisigAuthority: multisigAuthority
-  })
-    .signers([authorityKeypair])
-    .rpc();
-
-  console.log(`Updated configuration: +${newSlotsToGate.length} gated, -${slotsToUngate.length} ungated`);
-}
-
-// Example: Validation (typically called by other programs via CPI)
-async function checkCurrentSlot(
-  program: Program<SaguaroGatekeeper>,
-  multisigAuthority: PublicKey
-) {
   try {
-    // READ: Validate current slot (uses current epoch automatically)
-    await validateSandwichValidators(program, {
-      multisigAuthority: multisigAuthority
-    }).rpc();
-    
-    console.log("Current slot is not gated - operation allowed");
-    return true;
-  } catch (error) {
-    if (error.toString().includes("SlotIsGated")) {
-      console.log("Current slot is gated - operation blocked");
+    const accountInfo = await connection.getAccountInfo(pdaAddress);
+    if (!accountInfo) {
+      console.log(`No gatekeeper configuration for epoch ${epoch} - all slots ungated`);
       return false;
     }
-    throw error;
+
+    // Read bitmap directly
+    const HEADER_SIZE = 16;
+    const bitmapData = accountInfo.data.slice(HEADER_SIZE);
+    
+    const epochStartSlot = epoch * 432000;
+    const relativeSlot = slot - epochStartSlot;
+    const byteIndex = Math.floor(relativeSlot / 8);
+    const bitIndex = relativeSlot % 8;
+    
+    if (byteIndex >= bitmapData.length) {
+      return false; // Outside bitmap capacity
+    }
+    
+    const byte = bitmapData[byteIndex];
+    const isGated = (byte >> bitIndex) & 1;
+    
+    console.log(`Slot ${slot} is ${isGated ? 'GATED' : 'NOT gated'}`);
+    return Boolean(isGated);
+    
+  } catch (error) {
+    console.error(`Error checking slot status: ${error}`);
+    return false;
   }
 }
 
-// Example: Cleanup when epoch is finished
-async function cleanupFinishedEpoch(
-  program: Program<SaguaroGatekeeper>,
-  epochToClose: number,
-  multisigAuthority: PublicKey
-) {
-  // DELETE: Close past epoch and refund rent
-  await closeSandwichValidator(program, {
-    epoch: epochToClose,
-    multisigAuthority: multisigAuthority
-  })
-    .signers([authorityKeypair])
-    .rpc();
+// Example: Get all gated slots for an epoch
+async function getGatedSlots(epoch: number): Promise<number[]> {
+  const [pdaAddress] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from('sandwich_validators'),
+      AUTHORITY.toBuffer(),
+      Buffer.from(new Uint16Array([epoch]).buffer)
+    ],
+    GATEKEEPER_PROGRAM_ID
+  );
 
-  console.log(`Closed epoch ${epochToClose} and refunded rent`);
+  const accountInfo = await connection.getAccountInfo(pdaAddress);
+  if (!accountInfo) return [];
+
+  const gatedSlots: number[] = [];
+  const HEADER_SIZE = 16;
+  const bitmapData = accountInfo.data.slice(HEADER_SIZE);
+  const epochStartSlot = epoch * 432000;
+
+  for (let byteIndex = 0; byteIndex < bitmapData.length; byteIndex++) {
+    const byte = bitmapData[byteIndex];
+    if (byte === 0) continue;
+
+    for (let bitIndex = 0; bitIndex < 8; bitIndex++) {
+      if ((byte >> bitIndex) & 1) {
+        const relativeSlot = byteIndex * 8 + bitIndex;
+        const absoluteSlot = epochStartSlot + relativeSlot;
+        gatedSlots.push(absoluteSlot);
+      }
+    }
+  }
+
+  return gatedSlots;
+}
+
+// Example usage
+async function main() {
+  const currentEpoch = 816;
+  const testSlot = 352033214;
+  
+  // Check specific slot
+  await checkSlotStatus(currentEpoch, testSlot);
+  
+  // Get all gated slots
+  const gatedSlots = await getGatedSlots(currentEpoch);
+  console.log(`Found ${gatedSlots.length} gated slots in epoch ${currentEpoch}`);
 }
 ```
 

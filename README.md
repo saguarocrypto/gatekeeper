@@ -63,7 +63,7 @@ use anchor_lang::solana_program::{
 // The public key of the Saguaro Gatekeeper program
 const GATEKEEPER_PROGRAM_ID: Pubkey = pubkey!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
 // The public key of the multisig authority for the gatekeeper configuration
-const GATEKEEPER_AUTHORITY: Pubkey = pubkey!("<GATEKEEPER_MULTISIG_AUTHORITY_PUBKEY>");
+const GATEKEEPER_AUTHORITY: Pubkey = pubkey!("7RVKFVfy5FCMpc2WxXtz4A4HVKrz3R7vKur5JAfyEyaX");
 
 // Inside your instruction handler...
 let clock = Clock::get()?;

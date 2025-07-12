@@ -9,7 +9,7 @@ skip-lint = false
 saguaro_gatekeeper = "D291aiDeFSTj1KVJ1ScwTpCFnALaPkNqDQCduGdDBTHg"
 
 [programs.localnet]
-saguaro_gatekeeper = "4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv"
+saguaro_gatekeeper = "saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3"
 
 [programs.mainnet]
 saguaro_gatekeeper = "saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3"
@@ -18,7 +18,7 @@ saguaro_gatekeeper = "saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "mainnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

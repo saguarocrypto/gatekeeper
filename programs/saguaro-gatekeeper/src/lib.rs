@@ -9,18 +9,7 @@ pub mod instructions;
 // Re-export all constants for backward compatibility
 pub use constants::*;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "mainnet-beta")] {
-        declare_id!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
-    } else if #[cfg(feature = "devnet")] {
-        declare_id!("D291aiDeFSTj1KVJ1ScwTpCFnALaPkNqDQCduGdDBTHg");
-    } else if #[cfg(feature = "staging")] {
-        declare_id!("D291aiDeFSTj1KVJ1ScwTpCFnALaPkNqDQCduGdDBTHg");
-    } else {
-        // Default to localnet for testing
-        declare_id!("4M1VdxXK36E1TNWuP86qydZYKWggFa6hgdZhc4VTUsUv");
-    }
-}
+declare_id!("saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3");
 
 #[program]
 pub mod saguaro_gatekeeper {

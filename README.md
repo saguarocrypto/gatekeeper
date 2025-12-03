@@ -21,7 +21,8 @@ For detailed information about all available instructions, including core CRUD o
 
 Gatekeeper is deployed in the following Program ID:
 
-- Mainnet: `saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3`
+~- Mainnet: `saGUaroo4mjAcckhEPhtSRthGgFLdQpBvQvuwdf7YG3`~
+- NOTE: The Gatekeeper program was closed on December 3, 2025
 
 ## CPI Integration Guide
 
